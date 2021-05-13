@@ -70,6 +70,6 @@ naba.abundance<-merge(obs.data, survey.data, by=intersect(names(obs.data), names
   group_by(cell, Lat, Lng, CountID, SurveyID, ObsYear, ObsMonth, doy, group) %>%
   summarize(abund.bph=round(sum(bph),3), log.abund=round(log(sum(bph)),3), SR=sum(sp1))
 
-write.csv(naba.abundance, file="data/derived_data/naba_OWS_abundances.csv")
+write.csv(naba.abundance, file="data/derived/naba_OWS_abundances.csv")
 
 
