@@ -38,9 +38,9 @@ ab1<-merge(x = ab, y = env, by = intersect(names(ab), names(env)), all.x = TRUE)
 ab.final<-merge(x = ab1, y = abund.py, by.x=c("cell", "year", "CountID", "ows.grp"), by.y=c("cell", "year", "CountID", "ows.grp"), all.x = TRUE)
 
 #abundance Model
-naba.1<-na.omit(ab.final) %>% mutate(ows.grp=as.factor(ows.grp),summer.dev1=summer.dev/100,year=year-2002, doy=doy-150, on.dev=onset.d/7, dur.dev=dur.d/7, gr_mn_lag=gr_mn_lag/7, FR.dev=FRD.dev/7)
+naba.1<-(ab.final) %>% mutate(ows.grp=as.factor(ows.grp),summer.dev1=summer.dev/100,year=year-2002, doy=doy-150, on.dev=onset.d/7, dur.dev=dur.d/7, gr_mn_lag=gr_mn_lag/7, FR.dev=FRD.dev/7)
 #naba.1$ows.grp<-factor(naba.1$ows.grp,levels(factor(naba.1$ows.grp))[c(1,2,3)])
-ab.yr.full<-lmer(log.abund~0+ows.grp+abund.py+warmearly:ows.grp+warmlateopen+on.dev+dur.dev+year:ows.grp+gr_mn_lag+as.factor(ObsMonth)+doy+FR.dev:ows.grp+(1|cell)+(1|CountID), data=naba.1)
+ab.yr.full<-lmer(log.abund~0+ows.grp+logab.py+warmearly:ows.grp+warmlateopen+on.dev+dur.dev+year:ows.grp+gr_mn_lag+as.factor(ObsMonth)+doy+FR.dev:ows.grp+(1|cell)+(1|CountID), data=naba.1)
 r.squaredGLMM(ab.yr.full)     
 summary(ab.yr.full)
 (step_resyr <- step(ab.yr.full))
@@ -48,6 +48,31 @@ finalyr <- get_model(step_resyr)
 anova(finalyr)
 summary(finalyr)
 r.squaredGLMM(finalyr)
+
+#plots
 plot_model(finalyr, values=T)
 
+hist(naba.1$year)
+hist(naba.1$CountID)
 
+ggplot(data=naba.1) + geom_boxplot(aes(factor(ObsMonth),log.abund, fill=ows.grp)) + 
+  scale_x_discrete(labels = c('June','July')) + theme_classic()
+
+
+ggplot(data=naba.1,aes(x=logab.py, y=log.abund, color=ows.grp)) + geom_point() +
+  geom_smooth(method="lm") + theme_classic()
+
+ggplot(data=naba.1,aes(x=on.dev, y=log.abund, color=ows.grp)) + geom_point() +
+  geom_smooth(method="lm") + theme_classic()
+
+ggplot(data=naba.1,aes(x=FR.dev, y=log.abund, color=ows.grp)) + geom_point() +
+  geom_smooth(method="lm") + theme_classic()
+
+ggplot(data=naba.1,aes(x=year, y=log.abund, color=ows.grp)) + geom_point() +
+  geom_smooth(method="lm") + theme_classic() + theme(legend.position="none")
+
+ggplot(data=naba.1,aes(x=warmearly, y=log.abund, color=ows.grp)) + geom_point() +
+  geom_smooth(method="lm") + theme_classic() 
+
+ggplot(data=env,aes(x=year, y=spring.dev, color=(cell_lat))) + geom_point() +
+  geom_smooth(method="lm") + theme_classic() + theme(legend.position="none")
