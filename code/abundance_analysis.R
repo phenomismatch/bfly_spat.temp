@@ -8,6 +8,7 @@ library(lmerTest)
 library(ggplot2)
 library(r2glmm)
 library(sjPlot)
+library(MuMIn)
 #abundance metrics
 
 abund<-read_csv("data/derived/naba_OWS_abundances.csv") %>%
@@ -15,7 +16,7 @@ abund<-read_csv("data/derived/naba_OWS_abundances.csv") %>%
 
 #explanatory variables
 env<-read_csv("data/derived/envir.csv") %>%
-  select(cell, year, warmearly, warmlateopen, gr_mn_for, gr_mn_open, gr_mn_lag, spring.dev, summer.dev, FFD.dev, FRD.dev)
+  select(cell, year, warmearly, warmlateopen, gr_mn_for, gr_mn_open, gr_mn_lag, spring.dev, summer.dev, FFD.dev, FRD.dev, cell_lat)
 pheno<-read_csv("data/derived/simpleton_pheno_pdfs-OutlierDetection.csv") %>%
   select(year, cell=HEXcell,ows.grp=code, doy=x, pdf=y) %>%
   group_by(year, cell, ows.grp) %>% 
@@ -39,6 +40,8 @@ ab.final<-merge(x = ab1, y = abund.py, by.x=c("cell", "year", "CountID", "ows.gr
 
 #abundance Model
 naba.1<-(ab.final) %>% mutate(ows.grp=as.factor(ows.grp),summer.dev1=summer.dev/100,year=year-2002, doy=doy-150, on.dev=onset.d/7, dur.dev=dur.d/7, gr_mn_lag=gr_mn_lag/7, FR.dev=FRD.dev/7)
+
+
 #naba.1$ows.grp<-factor(naba.1$ows.grp,levels(factor(naba.1$ows.grp))[c(1,2,3)])
 ab.yr.full<-lmer(log.abund~0+ows.grp+logab.py+warmearly:ows.grp+warmlateopen+on.dev+dur.dev+year:ows.grp+gr_mn_lag+as.factor(ObsMonth)+doy+FR.dev:ows.grp+(1|cell)+(1|CountID), data=naba.1)
 r.squaredGLMM(ab.yr.full)     
