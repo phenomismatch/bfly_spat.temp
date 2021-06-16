@@ -70,6 +70,7 @@ ggplot(data=filter(greendev, year>2009), aes(x=gr_mn_for, y=gr_mn_lag, color=gr_
   labs(x="Greenup in forest pixels", y="Lag of open pixels", color="percent forest") + 
   theme_minimal()
 
+write.csv(env_var, file="data/derived/environmental.vars.csv")
 
 ## filter data to what is needed and PCA 
 abund<-read_csv("data/derived/naba_OWS_abundances.csv") %>%
@@ -77,9 +78,14 @@ abund<-read_csv("data/derived/naba_OWS_abundances.csv") %>%
   summarize(cellyr=paste(cell,year,sep=".")) 
 
 tempabund<-abund %>% dplyr::select(cellyr) %>% group_by(cellyr) %>% tally()
+pheno.datafile<-"data/derived/adult_bfly_metrics.csv"
+pheno.orig<-read_csv(pheno.datafile)
+hexyrs<-pheno.orig %>% dplyr::select(year, cell=HEXcell) %>%
+  mutate(cellyr=paste(cell,year,sep=".")) %>% 
+  group_by(year, cell, cellyr) %>% tally()
 
 env_var<-env_var %>% mutate(cellyr=paste(cell,year,sep=".")) %>%
-  filter(cellyr %in% tempabund$cellyr)
+  filter(cellyr %in% c(tempabund$cellyr,hexyrs$cellyr))
 
 corr <- round(cor(na.omit(env_var[,c(7,10,11,14,16,18,21:22)])), 1)
 ggcorrplot(corr, method = "circle")

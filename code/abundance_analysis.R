@@ -10,6 +10,8 @@ library(r2glmm)
 library(sjPlot)
 library(MuMIn)
 library(MASS)
+library(car) #(for VIF function)
+
 #abundance metrics
 
 abund<-read_csv("data/derived/naba_OWS_abundances.csv") %>%
@@ -46,7 +48,8 @@ naba.1<-(ab.final) %>% mutate(ows.grp=as.factor(ows.grp),summer.dev1=summer.dev/
 
 #naba.1$ows.grp<-factor(naba.1$ows.grp,levels(factor(naba.1$ows.grp))[c(1,2,3)])
 
-ab.yr.full<-lmer(log.abund~0+ows.grp+logab.py+warmearly:ows.grp+warmlateopen+on.dev+abslag+dur.dev+year:ows.grp+gr_mn_lag+as.factor(ObsMonth)+doy+FR.dev:ows.grp+(1|cell)+(1|CountID), data=naba.1)
+ab.yr.full<-lmer(log.abund~ows.grp+logab.py+warmearly+warmearly:ows.grp+warmlateopen+warmlateopen:ows.grp+on.dev+abslag+abslag:ows.grp+dur.dev+year+year:ows.grp+gr_mn_lag+as.factor(ObsMonth)+doy+FR.dev+FR.dev:ows.grp+(1|cell) + (1|CountID:cell), data=naba.1)
+ab.yr.full<-lmer(log.abund~-1+ows.grp*(logab.py+warmearly+warmlateopen+on.dev+abslag+dur.dev+year+gr_mn_lag+as.factor(ObsMonth)+doy+FR.dev)+(1|cell) + (1|CountID:cell), data=naba.1)
 r.squaredGLMM(ab.yr.full)     
 summary(ab.yr.full)
 (step_resyr <- step(ab.yr.full))
@@ -55,9 +58,51 @@ anova(finalyr)
 summary(finalyr)
 r.squaredGLMM(finalyr)
 AIC(finalyr)
+vif(finalyr)
 
-fixed_only<-lm(log.abund~0+ows.grp+logab.py+on.dev+as.factor(ObsMonth)+abslag+daylag+ows.grp:warmearly+ows.grp:FR.dev, data=naba.1)
+ab.yr.full<-lmer(log.abund~ows.grp*(logab.py+warmearly+warmlateopen+on.dev+abslag+dur.dev+year+gr_mn_lag+as.factor(ObsMonth)+doy+FR.dev)+(1|cell) + (1|CountID:cell), data=naba.1)
+
+## how to interpret VIFs for interactions
+plot_model(finalyr)
+finalyr<-lmer(log.abund~-1+ows.grp+logab.py+warmearly:ows.grp+warmlateopen:ows.grp+on.dev:ows.grp+abslag+year:ows.grp+as.factor(ObsMonth):ows.grp+doy:ows.grp+(1|cell/CountID), data=naba.1)
+(step_resyr <- step(finalyr))
+finalyr <- get_model(step_resyr) #stepAIC(ab.yr.full)
+anova(finalyr)
+ranova(finalyr)
+summary(finalyr)
+r.squaredGLMM(finalyr)
+AIC(finalyr)
+vif(finalyr)
+plot_model(finalyr)
+
+fixedyr<-lm(log.abund~-1+ows.grp+logab.py+abslag+warmearly:ows.grp+warmlateopen:ows.grp+on.dev:ows.grp+as.factor(ObsMonth):ows.grp+doy:ows.grp, data=naba.1)
+phtest_glmer(finalyr, fixedyr)
+plotresult<-plot_model(finalyr, values=T)
+
+fixedlabels<-c(rep("",20))
+fixedlabels[which(summary(finalyr)$coefficients[,5]<0.05)]<-"*"
+plotresult + annotate(geom="text", x=rev(c(1:20)), y=rep(-3,20), label=fixedlabels)
+
+ggplot(data=naba.1, aes(x=ows.grp, y=log.abund)) + geom_boxplot()
+#ggplot(data=naba.1, aes(color=ows.grp, fill=ows.grp, x=logab.py, y=log.abund)) + geom_point()
+ggplot(data=naba.1, aes(color=as.factor(CountID), fill=CountID, shape=ows.grp, x=logab.py, y=log.abund)) + geom_point() +theme(legend.position="none")
+#ggplot(data=naba.1, aes( shape=ows.grp, x=logab.py, y=log.abund)) + geom_point()
+ggplot(data=naba.1, aes(color=ows.grp, fill=ows.grp, x=warmearly, y=log.abund)) + geom_point() + geom_smooth(method="lm")
+ggplot(data=naba.1, aes(color=ows.grp, fill=ows.grp, x=warmlateopen, y=log.abund)) + geom_point() + geom_smooth(method="lm")
+ggplot(data=naba.1, aes(color=ows.grp, fill=ows.grp, x=warmlateopen, y=log.abund)) + geom_point() + geom_smooth(method="lm")
+ggplot(data=naba.1, aes(color=ows.grp, fill=ows.grp, x=on.dev, y=log.abund)) + geom_point() + geom_smooth(method="lm")
+ggplot(data=naba.1, aes(color=ows.grp, fill=ows.grp, x=doy, y=log.abund)) + geom_point() + geom_smooth(method="lm") + facet_wrap(.~ObsMonth)
+
+ggplot(data=naba.1, aes(x=doy, y=abslag)) + geom_point() + geom_smooth()
+ggplot(data=naba.1, aes(x=abslag, y=log.abund)) + geom_point() + geom_smooth()
+
+fixed_only<-lm(log.abund~ows.grp+logab.py+on.dev+as.factor(ObsMonth)+abslag+daylag+warmearly+ows.grp:FR.dev, data=naba.1)
 AIC(fixed_only)
+
+#Is there a significant temporal trend in warmearly?
+env1<-naba.1 %>% dplyr::select(cell, year, warmearly:abslag) %>% group_by(cell, year, warmearly) %>% tally()
+summary(lm(warmearly~year+cell, data=env1))
+#spatial trend, not temporal trend
 
 
 fixed.full<-lm(log.abund~-1+ows.grp+logab.py+warmearly:ows.grp+warmlateopen+on.dev+dur.dev+year:ows.grp+gr_mn_lag+as.factor(ObsMonth)+doy+FR.dev:ows.grp, data=naba.1)
@@ -92,7 +137,7 @@ phtest_glmer <- function (glmerMod, glmMod, ...)  {  ## changed function call
   names(stat) <- "chisq"
   parameter <- df
   names(parameter) <- "df"
-  alternative <- "choose fixed effects model"
+  alternative <- ifelse(pval<0.05,"choose fixed effects model","choose mixed effects model")
   res <- list(statistic = stat, p.value = pval, parameter = parameter, 
               method = "Hausman Test",  alternative = alternative,
               data.name=deparse(getCall(glmerMod)$data))  ## changed
@@ -108,7 +153,7 @@ plotresult<-plot_model(fixedyr, values=T)
 
 fixedlabels<-c(rep("",15))
 fixedlabels[which(summary(fixedyr)$coefficients[,4]<0.05)]<-"*"
-plotresult + annotate(geom="text", x=rev(c(1:15)), y=rep(-1,15), label=fixedlabels)
+plotresult + annotate(geom="text", x=rev(c(1:15)), y=rep(-1.5,15), label=fixedlabels)
 
 summary(naba.1)
 #####

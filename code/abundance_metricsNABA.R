@@ -71,7 +71,7 @@ naba.abundance<-merge(obs.data, survey.data, by=intersect(names(obs.data), names
   mutate(bph=NumSeen/Party_Hours, doy=yday(SurveyDate), sp1=1) %>%
   group_by(SurveyID) %>% mutate(SR=sum(sp1)) %>%
   filter(bph<=maxBPH, SR>=minSR) %>%
-  group_by(cell, Lat, Lng, CountID, SurveyID, ObsYear, ObsMonth, doy, group) %>%
+  group_by(cell, Lat, Lng, CountID, SurveyID, ObsYear, ObsMonth, doy, group, ) %>%
   summarize(abund.bph=round(sum(bph),3), log.abund=round(log(sum(bph)),3), SR=sum(sp1))
 
 #Write abundance metrics data table to csv
