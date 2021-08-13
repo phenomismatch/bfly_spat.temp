@@ -20,7 +20,7 @@ eq_doys<-c(80,172,266,356) #DOYs for equinox & solstice dates
 ## Spring GDD (from DOY 80 to DOY 172: approximating spring equinox to summer solstice)
 #Daily mean growing degree day values by hex cell
 cpc.gdd<-na.omit(read_csv("data/envir/cpcGDD_hex_2000-2020.csv")) %>%
-  select(cell=hex_cell, date, year, doy, meanGDD) %>%
+  dplyr::select(cell=hex_cell, date, year, doy, meanGDD) %>%
   filter(doy>=eq_doys[1],doy<=eq_doys[3]) %>%
   mutate(season=ifelse(doy<eq_doys[2],"spring.gdd","summer.gdd")) %>%
   group_by(cell, year, season) %>%
@@ -36,13 +36,13 @@ cpc.gdd<-na.omit(read_csv("data/envir/cpcGDD_hex_2000-2020.csv")) %>%
 
 
 cpc.winter<-read.csv("data/envir/cpc_winter.csv" ) %>%
-  select(cell=hex_cell, year=season, FRD, FFD) %>%
+  dplyr::select(cell=hex_cell, year=season, FRD, FFD) %>%
   group_by(cell) %>%
   filter(year %in% c(2001:2020)) %>%
   mutate(FFDhm=mean(FFD, na.rm=T),FRDhm=mean(FRD, na.rm=T)) %>%
   group_by(cell, year) %>%
   summarize(FRD=mean(FRD, na.rm=T), FFD=mean(FFD, na.rm=T),FFD.dev=ifelse(is.na(FFD),NA,(FFD-FFDhm)),FRD.dev=ifelse(is.na(FRD),NA,(FRD-FRDhm))) %>%
-  select(cell, year, FFD, FRD, FFD.dev, FRD.dev)
+  dplyr::select(cell, year, FFD, FRD, FFD.dev, FRD.dev)
 
 
 clim.data<-merge(cpc.gdd, cpc.winter, by=c("cell","year"), all.x=T, all.y=T)
@@ -53,11 +53,11 @@ write.csv(clim.data, file="data/envir/cpc.comb.csv")
 
 #Greenup: halfmax DOY forest pixels
 green.for<-readRDS("data/envir/MidGreenup-2020-08-06-forest.rds") %>%
-  select(year, cell, gr_mn_for=gr_mn, gr_pfor=gr_pcell, cell_lat, cell_lng)
+  dplyr::select(year, cell, gr_mn_for=gr_mn, gr_pfor=gr_pcell, cell_lat, cell_lng)
 
 #Greenup: half-max DOY all pixels
 green.all<-readRDS("data/envir/MidGreenup-2020-08-06-all.rds") %>% 
-  select(year, cell, gr_mn_all=gr_mn, gr_pall=gr_pcell, cell_lat, cell_lng)
+  dplyr::select(year, cell, gr_mn_all=gr_mn, gr_pall=gr_pcell, cell_lat, cell_lng)
 
 #Greenup: calculate half-max DOY of open pixels
 greendev<-merge(green.all,green.for, by=intersect(names(green.all),names(green.for)), all.x=T, all.y=T) %>%
@@ -94,7 +94,7 @@ ggcorrplot(corr, method = "circle")
 pca_res <- prcomp(na.omit(env_var[,c(7,10,14)]), scale. = TRUE)
 summary(pca_res)
 pca_res
-pca<-data.frame(cell=env_var$cell[!is.na(env_var$gr_mn_for)], year=env_var$year[!is.na(env_var$gr_mn_for)],  warmearly=-(pca_res$x[,1]),warmlateopen=pca_res$x[,2] )
+pca<-data.frame(cell=env_var$cell[!is.na(env_var$gr_mn_for)], year=env_var$year[!is.na(env_var$gr_mn_for)],  warmearly=(pca_res$x[,1]),warmlateopen=-pca_res$x[,2] )
 
 
 env2<-merge(env_var[,-23],pca, by=intersect(names(env_var),names(pca)),all.x=T)

@@ -27,6 +27,7 @@ naba.circles<-read_csv("data/naba/naba_circles.csv")
 
 #Database connection
 con1 <- odbcConnect("NABAcircle2018")
+sqlTables(con1)
 
 #fetch observations table, filter to surveys with at least 10 species in the applicable years
 naba.obs<-sqlFetch(con1,"NFJ_Observations to 2018")  %>% 

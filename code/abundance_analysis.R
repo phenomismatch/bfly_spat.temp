@@ -1,5 +1,5 @@
 #Modeling patterns in butterfly abundance
-#Elise Larsen, Georgetown U, Updated 2012-05
+#Elise Larsen, Georgetown U, Updated 2012-08
 
 #libraries
 library(tidyverse)
@@ -13,75 +13,129 @@ library(MASS)
 library(car) #(for VIF function)
 
 #abundance metrics
+theme_set(theme_sjplot())
+###PHENO DATA
+load("data/derived/pheno.RData")
+pheno.dev<-left_join(pheno.dev, pheno.quant)
 
 abund<-read_csv("data/derived/naba_OWS_abundances.csv") %>%
-  dplyr::select(cell, year=ObsYear, doy, CountID, SurveyID, ObsMonth, ows.grp=group, abund.bph, log.abund, SR)
+  dplyr::select(cell, year=ObsYear, doy, CountID, SurveyID, ObsMonth, code=group, abund.bph, log.abund, SR)
 
 #explanatory variables
 env<-read_csv("data/derived/envir.csv") %>%
   dplyr::select(cell, year, warmearly, warmlateopen, gr_mn_for, gr_mn_open, gr_mn_lag, spring.dev, summer.dev, FFD.dev, FRD.dev, cell_lat)
-pheno<-read_csv("data/derived/simpleton_pheno_pdfs-OutlierDetection.csv") %>%
-  dplyr::select(year, cell=HEXcell,ows.grp=code, doy=x, pdf=y) %>%
-  group_by(year, cell, ows.grp) %>% 
-  mutate(maxpdf=max(pdf, na.rm=T)) %>%
-  mutate(cumpr=cumsum(pdf)*.5, on=ifelse(cumpr>0.01,1,0),med=ifelse(cumpr>0.5,1,0),term=ifelse(cumpr>0.99,1,0)) %>%
-  mutate(onc=cumsum(on),medc=cumsum(med),termc=cumsum(term),) %>%
-  summarize(onset=doy[onc==1], median=doy[medc==1], duration=doy[termc==1]-doy[onc==1], maxdoy=doy[pdf==maxpdf]) %>%
-  group_by(cell, ows.grp) %>% 
-  mutate(onset.hm=mean(onset, na.rm=T), duration.hm=mean(duration, na.rm=T), onset.d=onset-onset.hm, dur.d=duration-duration.hm)
-
 
 #previous year abundance
 abund.py<-abund %>%
   mutate(year=year+1) %>%
-  dplyr::select(cell, year, CountID, ows.grp, abund.py=abund.bph, logab.py=log.abund)
+  dplyr::select(cell, year, CountID, code, abund.py=abund.bph, logab.py=log.abund)
 
 
 #combine tables
-ab<-merge(x = abund, y = pheno, by = intersect(names(abund), names(pheno)), all.x = TRUE)
+ab<-merge(x = abund, y = pheno.dev, by = intersect(names(abund), names(pheno.dev)), all.x = TRUE)
 ab1<-merge(x = ab, y = env, by = intersect(names(ab), names(env)), all.x = TRUE)
-ab.final<-merge(x = ab1, y = abund.py, by.x=c("cell", "year", "CountID", "ows.grp"), by.y=c("cell", "year", "CountID", "ows.grp"), all.x = TRUE)
-
+ab.final<-merge(x = ab1, y = abund.py, by.x=c("cell", "year", "CountID", "code"), by.y=c("cell", "year", "CountID", "code"), all.x = TRUE)
 #abundance Model
-naba.1<-(ab.final) %>% mutate(ows.grp=as.factor(ows.grp),summer.dev1=summer.dev/100,year=year-2002, on.dev=onset.d/7, dur.dev=dur.d/7, gr_mn_lag=gr_mn_lag/7, FR.dev=FRD.dev/7, daylag=doy-maxdoy, abslag=abs(doy-maxdoy))
+naba.1<-(ab.final) %>% mutate(code=as.factor(code),summer.dev1=summer.dev/100,year=year-2002, on.dev=q5_dev/7, dur.dev=qdur_dev/7, gr_mn_lag=gr_mn_lag/7, FR.dev=FRD.dev/7, daylag=doy-q50, abslag=abs(doy-q50))
+naba.1<-naba.1 %>% mutate(MonthF=as.factor(ObsMonth))
+save(naba.1, file="data/abund.input.RData")
 
+summary(naba.1)
+includeNA<-T
+if(includeNA==T) {
+  ab.yr.full<-lmer(log.abund~-1+code*(warmearly+logab.py+warmlateopen+on.dev+abslag+dur.dev+MonthF*doy+year+FR.dev)+(1|cell) + (1|CountID:cell), data=naba.1)
 
-#naba.1$ows.grp<-factor(naba.1$ows.grp,levels(factor(naba.1$ows.grp))[c(1,2,3)])
+  extractAIC(ab.yr.full)
+  ab.yr.1<-lmer(log.abund~-1+code+code:warmearly+code:logab.py+code:warmlateopen+code:on.dev+code:abslag+code:dur.dev+code:(MonthF*doy)+code:FR.dev+code:year+(1|cell) + (1|CountID:cell), data=naba.1)
+  extractAIC(ab.yr.1)
+  ab.yr.2<-lmer(log.abund~-1+code+code:warmearly+code:logab.py+code:warmlateopen+code:on.dev+code:abslag+code:dur.dev+code:(MonthF*doy)+code:FR.dev+(1|cell) + (1|CountID:cell), data=naba.1)
+  extractAIC(ab.yr.2)
+  ab.yr.3<-lmer(log.abund~-1+code+code:warmearly+logab.py+code:warmlateopen+code:on.dev+code:abslag+code:dur.dev+code:(MonthF*doy)+code:FR.dev+(1|cell) + (1|CountID:cell), data=naba.1)
+  extractAIC(ab.yr.3)
+  ab.yr.4<-lmer(log.abund~-1+code:warmearly+logab.py+code:warmlateopen+code:on.dev+abslag+code:dur.dev+code:(MonthF*doy)+code:FR.dev+(1|cell) + (1|CountID:cell), data=naba.1)
+  extractAIC(ab.yr.4)
+  ab.final<-ab.yr.4  
+  ab.vif<-lmer(log.abund~code+warmearly+logab.py+warmlateopen+on.dev+dur.dev+abslag+doy+MonthF+FR.dev+(1|cell) + (1|CountID:cell), data=naba.1)
+  
+  vif(ab.vif)
+}else {
+  naba.1<-na.omit(naba.1)
 
-ab.yr.full<-lmer(log.abund~ows.grp+logab.py+warmearly+warmearly:ows.grp+warmlateopen+warmlateopen:ows.grp+on.dev+abslag+abslag:ows.grp+dur.dev+year+year:ows.grp+gr_mn_lag+as.factor(ObsMonth)+doy+FR.dev+FR.dev:ows.grp+(1|cell) + (1|CountID:cell), data=naba.1)
-ab.yr.full<-lmer(log.abund~-1+ows.grp*(logab.py+warmearly+warmlateopen+on.dev+abslag+dur.dev+year+gr_mn_lag+as.factor(ObsMonth)+doy+FR.dev)+(1|cell) + (1|CountID:cell), data=naba.1)
+ab.yr.full<-lmer(log.abund~-1+code*(warmearly+logab.py+warmlateopen+on.dev+abslag+dur.dev+MonthF*doy+year+FR.dev)+(1|cell) + (1|CountID:cell), data=naba.1)
 r.squaredGLMM(ab.yr.full)     
 summary(ab.yr.full)
 (step_resyr <- step(ab.yr.full))
 finalyr <- get_model(step_resyr) #stepAIC(ab.yr.full)
 anova(finalyr)
 summary(finalyr)
-r.squaredGLMM(finalyr)
-AIC(finalyr)
-vif(finalyr)
+ab.final<-lmer(log.abund~-1+code+code:warmearly+logab.py+code:warmlateopen+code:on.dev+code:dur.dev+code:doy+code:year+code:FR.dev+(1|cell) + (1|CountID:cell), data=naba.1)
 
-ab.yr.full<-lmer(log.abund~ows.grp*(logab.py+warmearly+warmlateopen+on.dev+abslag+dur.dev+year+gr_mn_lag+as.factor(ObsMonth)+doy+FR.dev)+(1|cell) + (1|CountID:cell), data=naba.1)
+r.squaredGLMM(ab.final)
+AIC(ab.final)
+(step_ab.1 <- step(ab.final))
+ab.final <- get_model(step_ab.1) #stepAIC(ab.yr.full)
+ab.vif<-lmer(log.abund~code+warmearly+logab.py+warmlateopen+on.dev+dur.dev+doy+MonthF+year+FR.dev+(1|cell) + (1|CountID:cell), data=naba.1)
 
-## how to interpret VIFs for interactions
-plot_model(finalyr)
-finalyr<-lmer(log.abund~-1+ows.grp+logab.py+warmearly:ows.grp+warmlateopen:ows.grp+on.dev:ows.grp+abslag+year:ows.grp+as.factor(ObsMonth):ows.grp+doy:ows.grp+(1|cell/CountID), data=naba.1)
-(step_resyr <- step(finalyr))
-finalyr <- get_model(step_resyr) #stepAIC(ab.yr.full)
-anova(finalyr)
-ranova(finalyr)
-summary(finalyr)
-r.squaredGLMM(finalyr)
-AIC(finalyr)
-vif(finalyr)
-plot_model(finalyr)
+vif(ab.vif)
+#abund.best<-lmer(log.abund~-1+ows.grp+logab.py+abslag+ows.grp:warmearly+ows.grp:warmlateopen+ows.grp:on.dev+ows.grp:as.factor(ObsMonth)+ows.grp:doy+ows.grp:year+FR.dev+(1|cell) + (1|CountID:cell), data=naba.1)
+summary(ab.final)
+r.squaredGLMM(ab.final)
+write.csv(summary(ab.final)$coefficients, file="output/abundance.coefs.csv")
+plot_model(ab.final, type="eff", terms=c("doy","MonthF","code"))
 
-fixedyr<-lm(log.abund~-1+ows.grp+logab.py+abslag+warmearly:ows.grp+warmlateopen:ows.grp+on.dev:ows.grp+as.factor(ObsMonth):ows.grp+doy:ows.grp, data=naba.1)
+plot_model(ab.final, type="eff", terms=c("on.dev","code"))
+plot_model(ab.final, type="eff", terms=c("FR.dev","code"))
+plot_model(ab.final, type="eff", terms=c("warmearly","code"))
+plot_model(ab.final, type="eff", terms=c("warmlateopen","code"))
+plot_model(ab.final, type="eff", terms=c("logab.py","code"))
+
+
+}
+
+#finalyr<-lmer(log.abund~-1+ows.grp+logab.py+warmearly:ows.grp+warmlateopen:ows.grp+on.dev:ows.grp+abslag+year:ows.grp+as.factor(ObsMonth):ows.grp+doy:ows.grp+(1|cell/CountID), data=naba.1)
+#(step_resyr <- step(finalyr))
+#finalyr <- get_model(step_resyr) #stepAIC(ab.yr.full)
+#mixedyr<-lmer(log.abund~-1+ows.grp+logab.py+warmearly:ows.grp+warmlateopen:ows.grp+on.dev:ows.grp+abslag+year:ows.grp+year+as.factor(ObsMonth):ows.grp+doy:ows.grp+(1|cell/CountID), data=naba.1)
+#mixedyr2 <- get_model(step(mixedyr)) #stepAIC(ab.yr.full)
+
+mixedyr<-abund.best
+anova(mixedyr)
+ranova(mixedyr)
+summary(mixedyr)
+r.squaredGLMM(mixedyr)
+AIC(mixedyr)
+vif(mixedyr)
+plot.lmer<-plot_model(mixedyr)
+mixedlabels<-c(rep("",nrow(plot.lmer[[1]])))
+mixedlabels[which(summary(mixedyr)$coefficients[,5]<0.05)]<-"*"
+plot.lmer + annotate(geom="text", x=rev(c(1:nrow(plot.lmer[[1]]))), y=rep(-3,nrow(plot.lmer[[1]])), label=mixedlabels) + ggtitle("Abundance mixed effects model")
+
+test.vif.re<-lmer(log.abund ~ logab.py + abslag + warmearly +  
+                 warmlateopen + on.dev + as.factor(ObsMonth) +  
+                 doy + year + FR.dev + (1 | cell) + (1 | CountID:cell), data= filter(naba.1, ows.grp=="RE"))
+test.vif.rl<-lmer(log.abund ~ logab.py + abslag + warmearly +  
+                 warmlateopen + on.dev + as.factor(ObsMonth) +  
+                 doy + year + FR.dev + (1 | cell) + (1 | CountID:cell), data= filter(naba.1, ows.grp=="RL"))
+test.vif.rp<-lmer(log.abund ~ logab.py + abslag + warmearly +  
+                 warmlateopen + on.dev + as.factor(ObsMonth) +  
+                 doy + year + FR.dev + (1 | cell) + (1 | CountID:cell), data= filter(naba.1, ows.grp=="RP"))
+vif(test.vif.re)
+vif(test.vif.rl)
+vif(test.vif.rp)
+
+
+#fixedyr<-lm(log.abund~-1+ows.grp+logab.py+abslag+warmearly:ows.grp+warmlateopen:ows.grp+on.dev:ows.grp+as.factor(ObsMonth):ows.grp+doy:ows.grp, data=naba.1)
+fixedyr<-lm(log.abund~-1+ows.grp+logab.py+warmearly:ows.grp+warmlateopen:ows.grp+on.dev:ows.grp+abslag+year:ows.grp+as.factor(ObsMonth):ows.grp+doy:ows.grp, data=naba.1)
 phtest_glmer(finalyr, fixedyr)
 plotresult<-plot_model(finalyr, values=T)
 
-fixedlabels<-c(rep("",20))
-fixedlabels[which(summary(finalyr)$coefficients[,5]<0.05)]<-"*"
-plotresult + annotate(geom="text", x=rev(c(1:20)), y=rep(-3,20), label=fixedlabels)
+summary(finalyr)
+r.squaredGLMM(finalyr)
+
+plot.lm<-plot_model(fixedyr, values=T)
+fixedlabels<-c(rep("",nrow(plot.lm[[1]])))
+fixedlabels[which(summary(fixedyr)$coefficients[,4]<0.05)]<-"*"
+plot.lm + annotate(geom="text", x=rev(c(1:nrow(plot.lm[[1]]))), y=rep(-3,nrow(plot.lm[[1]])), label=fixedlabels) + ggtitle("Abundance fixed effects model")
 
 ggplot(data=naba.1, aes(x=ows.grp, y=log.abund)) + geom_boxplot()
 #ggplot(data=naba.1, aes(color=ows.grp, fill=ows.grp, x=logab.py, y=log.abund)) + geom_point()
@@ -93,7 +147,7 @@ ggplot(data=naba.1, aes(color=ows.grp, fill=ows.grp, x=warmlateopen, y=log.abund
 ggplot(data=naba.1, aes(color=ows.grp, fill=ows.grp, x=on.dev, y=log.abund)) + geom_point() + geom_smooth(method="lm")
 ggplot(data=naba.1, aes(color=ows.grp, fill=ows.grp, x=doy, y=log.abund)) + geom_point() + geom_smooth(method="lm") + facet_wrap(.~ObsMonth)
 
-ggplot(data=naba.1, aes(x=doy, y=abslag)) + geom_point() + geom_smooth()
+ggplot(data=naba.1, aes(x=doy, y=abslag)) + geom_point() + geom_smooth(method="lm")
 ggplot(data=naba.1, aes(x=abslag, y=log.abund)) + geom_point() + geom_smooth()
 
 fixed_only<-lm(log.abund~ows.grp+logab.py+on.dev+as.factor(ObsMonth)+abslag+daylag+warmearly+ows.grp:FR.dev, data=naba.1)
@@ -149,7 +203,7 @@ phtest_glmer <- function (glmerMod, glmMod, ...)  {  ## changed function call
 plot_model(finalyr, values=T)
 
 phtest_glmer(finalyr, fixedyr)
-plotresult<-plot_model(fixedyr, values=T)
+plotresult<-plot_model(fixedyr, show.values=T, show.p=T)
 
 fixedlabels<-c(rep("",15))
 fixedlabels[which(summary(fixedyr)$coefficients[,4]<0.05)]<-"*"
@@ -186,3 +240,41 @@ ggplot(data=naba.1,aes(x=warmearly, y=log.abund, color=ows.grp)) + geom_point() 
 
 ggplot(data=env,aes(x=year, y=spring.dev, color=(cell_lat))) + geom_point() +
   geom_smooth(method="lm") + theme_classic() + theme(legend.position="none")
+
+
+
+#all plot_models
+models<-list(onset.best, onset.dev.best, med.best, med.dev.best, dur.best, dur.dev.best)
+
+plot.panel<-function(model.i) {
+  labels.i<-label.sig(model.i)
+  coefs<-summary(model.i)$coefficients
+  min.row<-which(coefs[,1]==min(coefs[,1]))
+  ylab<-coefs[min.row,1]-2*(coefs[min.row,2])
+  plot_model(model.i) + 
+    annotate(geom="text", x=rev(c(1:length(labels.i))+.5), y=coefs[,1], label=labels.i) + 
+    theme_bw() + 
+    labs(subtitle = paste("marginal r-sq.=",round(r.squaredGLMM(onset.best),2)))
+}
+
+label.sig<-function(model.i) {
+  fixedlabels<-c(rep("",nrow(summary(model.i)$coefficients)))
+  fixedlabels[which(summary(model.i)$coefficients[,ncol(summary(model.i)$coefficients)]<0.05)]<-"*"
+  fixedlabels
+}
+plot.panel(onset.best)
+fixedlabels<-lapply(models, label.sig)
+
+plots<-plot.panel(fixedyr)
+pdf("output/abund.model.pdf")
+plots
+dev.off()
+
+
+tempabund<-predict(mixedyr, data=naba.1)
+plotdata<-cbind(naba.1, tempabund)
+ggplot(data=)
+
+ggplot(data=pheno.dev, aes(x=year, y=q5_dev, color=code)) + geom_point() + geom_smooth(method="lm") + 
+  labs(y="Onset deviation")
+
