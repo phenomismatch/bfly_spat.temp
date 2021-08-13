@@ -27,6 +27,7 @@ naba.circles<-read_csv("data/naba/naba_circles.csv")
 
 #Database connection
 con1 <- odbcConnect("NABAcircle2018")
+sqlTables(con1)
 
 #fetch observations table, filter to surveys with at least 10 species in the applicable years
 naba.obs<-sqlFetch(con1,"NFJ_Observations to 2018")  %>% 
@@ -63,13 +64,18 @@ naba.obs<-merge(na.omit(naba.obs), naba.names,by=c("ScientificName"))  %>%
 
 obs.data<-merge(naba.obs, trait.data, by.x=c("SpeciesID"), by.y=c("ScientificName"))
 
+##Calculate abundance metrics by survey for OWS species groups
+#Calculate butterflies per party hour (bph) for each species recorded
+#Sum bph values within OWS species groups, log-transform, & round values to thousandths 
+#report observed species richness within groups
 naba.abundance<-merge(obs.data, survey.data, by=intersect(names(obs.data), names(survey.data))) %>%
   mutate(bph=NumSeen/Party_Hours, doy=yday(SurveyDate), sp1=1) %>%
   group_by(SurveyID) %>% mutate(SR=sum(sp1)) %>%
   filter(bph<=maxBPH, SR>=minSR) %>%
-  group_by(cell, Lat, Lng, CountID, SurveyID, ObsYear, ObsMonth, doy, group) %>%
+  group_by(cell, Lat, Lng, CountID, SurveyID, ObsYear, ObsMonth, doy, group, ) %>%
   summarize(abund.bph=round(sum(bph),3), log.abund=round(log(sum(bph)),3), SR=sum(sp1))
 
+#Write abundance metrics data table to csv
 write.csv(naba.abundance, file="data/derived/naba_OWS_abundances.csv")
 
 
