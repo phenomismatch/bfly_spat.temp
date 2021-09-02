@@ -16,7 +16,7 @@ library(stringr)
 ##Set parameters
 minSR<-10 #minimum recorded species richness (across all species) to include a survey
 maxBPH<-100 #maximum butterflies per hour value to include; records above this are thrown out
-month.filt<-c(6,7) #months in which to include surveys
+month.filt<-c(5:8) #months in which to include surveys
 year.filt<-c(2000:2018) #years in which to include surveys
 minYears<-2 #minimum number of years with survey data for a count circle to be included
 
