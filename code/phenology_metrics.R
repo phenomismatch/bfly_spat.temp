@@ -8,8 +8,13 @@
 
 library(tidyverse)
 
-pheno.datafile<-"data/derived/adult_bfly_phenometrics_quantileCIs.csv"
-pheno.quant<-read_csv(pheno.datafile) %>% rename(cell=HEXcell)
+load("data/spatial.domain.RData")
+
+
+pheno.datafile<-"data/derived/adult_bfly_phenometrics_noCountCircles.csv"
+pheno.quant<-read_csv(pheno.datafile) %>% rename(cell=HEXcell) %>%
+  filter(cell %in% STUDYCELLS, between(q50,152,243))
+
 
 
 ###Calculate durations
@@ -18,28 +23,28 @@ pheno.quant<-pheno.quant %>%
          q5_ci=q5_high-q5_low,q50_ci=q50_high-q50_low,
          q95_ci=q95_high-q95_low,qdur_ci=qdur_high-qdur_low)
 
-##Calculate deviations for cells with data 2017-2020
-dev.codes<-c("RL","RP")
+
+
+##Calculate deviations for cells with data 2016-2020
 dev.years<-c(2016:2020)
-pheno.dev.cells<-pheno.quant %>%
-  filter(code %in% dev.codes & year %in% dev.years) %>%
-  group_by(cell, year) %>%
-  add_tally(name="ncode") %>%
-  filter(ncode==2) %>%
-  group_by(cell) %>%
+pheno.cell.baseline<-pheno.quant %>%
+  filter(year %in% dev.years) %>%
+  group_by(cell,code) %>%
   add_tally(name="nyear")  %>%
-  filter(nyear==10) %>%
+  filter(nyear==5) %>%
   summarize(meanq5=mean(q5, na.rm=T),meanq50=mean(q50, na.rm=T),meanq95=mean(q95, na.rm=T),meanqdur=mean(qdur, na.rm=T)) %>%
-  select(cell, meanq5, meanq50, meanq95, meanqdur)  
+  dplyr::select(cell, code, meanq5, meanq50, meanq95, meanqdur)  
   
-pheno.dev<-inner_join(pheno.quant, pheno.dev.cells)  %>%
+pheno.dev<-inner_join(pheno.quant, pheno.cell.baseline)  %>%
   mutate(q5_dev=q5-meanq5,q50_dev=q50-meanq50,
          q95_dev=q95-meanq95,qdur_dev=qdur-meanqdur) %>%
-  select(cell, year, code, q5_dev, q5_ci, q50_dev,q50_ci, qdur_dev, qdur_ci, 
-         cumObsDays,uniqObsDays,totalAbundance,gcode)
+  dplyr::select(cell, year, code, onset.dev=q5_dev, onset.ci=q5_ci, median.dev=q50_dev,median.ci=q50_ci, 
+         dur.dev=qdur_dev, dur.ci=qdur_ci, cumObsDays,uniqObsDays,totalAbundance)
+
 
 save(pheno.quant, pheno.dev, file="data/derived/pheno.RData")
 
+#x<-read_csv("data/envir/cpcGDD_hex_2000-2020.csv")
 
 
 ##### END
