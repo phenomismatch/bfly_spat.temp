@@ -11,9 +11,9 @@ library(tidyverse)
 load("data/spatial.domain.RData")
 
 
-pheno.datafile<-"data/derived/adult_bfly_phenometrics_noCountCircles.csv"
+pheno.datafile<-"data/derived/adult_bfly_phenometrics_noCountCircles_withFull2020Data.csv"
 pheno.quant<-read_csv(pheno.datafile) %>% rename(cell=HEXcell) %>%
-  filter(cell %in% STUDYCELLS, between(q50,152,243))
+  filter(cell %in% STUDYCELLS, between(q50,152,243), !is.na(q5))
 
 
 
@@ -32,6 +32,7 @@ pheno.cell.baseline<-pheno.quant %>%
   group_by(cell,code) %>%
   add_tally(name="nyear")  %>%
   filter(nyear==5) %>%
+  group_by(cell,code) %>%
   summarize(meanq5=mean(q5, na.rm=T),meanq50=mean(q50, na.rm=T),meanq95=mean(q95, na.rm=T),meanqdur=mean(qdur, na.rm=T)) %>%
   dplyr::select(cell, code, meanq5, meanq50, meanq95, meanqdur)  
   
