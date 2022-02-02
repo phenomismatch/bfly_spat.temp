@@ -5,108 +5,204 @@
 library(MASS)
 library(lme4)
 library(lmerTest)
-library(ggplot2)
 library(r2glmm)
 library(sjPlot)
 library(MuMIn)
 library(car) #(for VIF function)
 library(tidyverse)
+library(viridis)
+library(ggpubr)
+library(gridExtra)
+library(png)
+library(magick)
+library(cowplot)
 
-load("data/spatial.domain.RData")
-#abundance metrics
+
+#Parameters
+ows.colors<-viridis_pal()(8)[c(1,4,7)]
+survey.months<-c(6:8)
 theme_set(theme_sjplot())
-###PHENO DATA
-load("data/derived/pheno.RData")
-#### ENV DATA
-#load("data/derived/env.input.RData")
-pheno1<-pheno.quant %>%
-  dplyr::select(q50,year,cell,code)
 
-(p1<-pheno.quant %>% group_by(code) %>% summarize(meanonset=mean(q5, na.rm=T), meandur=mean(qdur, na.rm=T), meanmed=mean(q50, na.rm=T)))
+#Input files
+abundance.file<-"data/derived/naba_OWS_abundances.csv"
+study.cells.file<-"data/spatial.domain.RData"
+pheno.data<-"data/derived/phenoDev.RData"
+env.dev.csv<-"data/derived/envDevs.csv"
 
-#env10<-env.var %>%
-#  group_by(year) %>%
-#  summarize(pc1=mean(pc1,na.rm=T), pc2=mean(pc2,na.rm=T),wd=mean(warmdays,na.rm=T)/10,cd=mean(colddays,na.rm=T)/10, summer=mean(summer.gdd,na.rm=T),openlag=mean(gr_mn_lag,na.rm=T)/2, lat=mean(cell_lat,na.rm=T))
+#Output files
+abund.model.input<-"data/abund.input.RData"
+abundance.model.fit<-"output/abundance.finalmodel.csv"
+#Load, filter, & format abundance data
+load(study.cells.file)
 
-#ggplot(data=filter(env10, year<2018), aes(x=year, y=pc1*2+1)) + geom_line() + 
-#  geom_line(data=env10, aes(x=year, y=pc2*2), color="purple") + 
-#  geom_line(data=env10, aes(x=year, y=wd-5), color="blue") + 
-#  geom_line(data=env10, aes(x=year, y=cd), color="slateblue") + 
-#  geom_line(data=env10, aes(x=year, y=summer), color="forestgreen") + 
-#  geom_line(data=env10, aes(x=year, y=openlag), color="springgreen") + 
-#  theme_minimal()
-  
-
-
-abund<-read_csv("data/derived/naba_OWS_abundances.csv") %>%
+abund<-read_csv(abundance.file) %>%
   dplyr::select(cell, year=ObsYear, doy, CountID, SurveyID, ObsMonth, code=group, abund.bph, log.abund, SR) %>%
-  filter(ObsMonth %in% c(6:8), cell %in% STUDYCELLS)
+  filter(ObsMonth %in% survey.months, cell %in% STUDYCELLS) %>%
+  group_by(cell, year, CountID, code) %>%
+  mutate(x=1, seq=cumsum(x), nsurveys=max(seq))
 
-(a1<-abund %>% filter(year<2018) %>% group_by(code) %>% summarize(meanbph=mean(abund.bph, na.rm=T), sdbph=sd(abund.bph, na.rm=T)))
+(a1<-abund %>% group_by(code) %>% summarize(meanbph=mean(abund.bph, na.rm=T), sdbph=sd(abund.bph, na.rm=T)))
+
+##Data visualization - base for FIGURE 1 panel (created in figures.R file)
+a2<-abund %>% group_by(year, code) %>% summarize(ct=log(mean(abund.bph, na.rm=T)))
+ggplot(data=a2, aes(x=year, y=ct, color=code)) + geom_line() + geom_smooth(method="lm") + scale_color_manual(values=ows.colors)
+
+
 #previous year abundance
 abund.py<-abund %>%
   mutate(year=year+1) %>%
-  dplyr::select(cell, year, CountID, code, abund.py=abund.bph, logab.py=log.abund)
+  filter(year < 2018) %>%
+  dplyr::select(cell, year, CountID, code, doy.py=doy, abund.py=abund.bph, logab.py=log.abund, seq.py=seq, nsurv.py=nsurveys) 
 
-a2<-abund %>% filter(year<2018)  %>% group_by(year, code) %>% summarize(ct=mean(log.abund, na.rm=T))
-ggplot(data=a2, aes(x=year, y=ct, color=code)) + geom_line() + geom_smooth(method="lm")
+#Add previous year abundance to abundance table
+abund1<-merge(abund, abund.py, by=c("year", "cell","CountID", "code"), all.x=T) %>%
+  mutate(keep=ifelse(seq==seq.py | nsurv.py==1,1,0)) %>% filter(keep==1) %>%
+  dplyr::select(year:SR, abund.py, logab.py)
 
-a3<-a2 %>% pivot_wider(id_cols=year, names_from=code, values_from=ct)
-a3b<-abund %>% pivot_wider(id_cols=c(year,CountID,doy), names_from=code, values_from=log.abund)
-cor(a3)
+summary(abund1)
 
-cor(na.omit(a3b[,c(1,4:6)]), method="pearson")
-load("data/derived/newphenodev.RData")
-#combine tables
-ab0<-merge(abund, pheno1, by=c("year","cell","code"), all.x=TRUE)
-ab0<-ab0 %>% mutate(Year=year, year=ifelse(year>1900,year-2000,year))
-ab<-merge(x = ab0, y = pheno.input.dev, by = intersect(names(ab0), names(pheno.input.dev)), all.x = TRUE)
-#ab1<-merge(x = ab, y = env.dev, by = intersect(names(ab), names(env.dev)), all.x = TRUE)
-ab.final<-merge(x = ab, y = abund.py, by.x=c("cell", "Year", "CountID", "code"), by.y=c("cell", "year", "CountID", "code"), all.x = TRUE)
-#abundance Model
-naba.1<-(ab.final) %>% mutate(code=as.factor(code),summer.dev=summer.dev, on.dev=onset.dev/7, dur.dev=dur.dev/7, lag.dev=lag.dev/7, cold.dev=cold.dev/7, daylag=doy-q50, abslag=abs(doy-q50))
-naba.1<-naba.1 %>% mutate(MonthF=as.factor(ObsMonth), ObsDay=as.numeric(format(as.Date(doy, origin = paste((year+1999),"12-31",sep="-")),format="%d")), eggows=ifelse(code=="RE",1,0))
+#Add environmental data
+env.dev<-read_csv(env.dev.csv)
 
-save(naba.1, file="data/abund.input1027.RData")
+abund.env<-na.omit(merge(abund1, env.dev, by=c("year", "cell"), all.x=T))
+
+##Filter and Add phenology data
+###PHENO DATA
+load(pheno.data)
+
+abund.pheno.1<-merge(abund.env, pheno.dev, by=c("year","cell","code"), all.x=T) %>%
+  mutate(Year=ifelse(year>1900,year-2000,year), year=ifelse(year<1900,year+2000,year), abs.surveylag=abs(q50-doy))
+
+summary(abund.pheno.1)
+
+naba.1<-(abund.pheno.1) %>% 
+  mutate(code=as.factor(code),daylag=doy-q50) %>%
+  rename(summer.dev=summer.gdd.dev, on.dev=onset.dev, dur.dev=dur.dev, lag.dev=open.lag.dev, cold.dev=cold.dev,abslag=abs.surveylag) %>%
+  mutate(MonthF=as.factor(ObsMonth), ObsDay=as.numeric(format(as.Date(doy, origin = paste((year+1999),"12-31",sep="-")),format="%d")))
+
+save(naba.1, file=abund.model.input)
 
 
-ggplot(data=naba.1, aes(x=onset.dev, y=log.abund, color=code)) + 
-  geom_smooth(method="lm")
-
-
+#Visualization: basis for Figure 1D
+vis.1<-naba.1 %>% group_by(code, year) %>% summarize(abundance=log(mean(abund.bph, na.omit=T)))
+ggplot(data=vis.1, aes(x=year, y=abundance, color=code)) + geom_line() + geom_smooth(method="lm") + scale_color_manual(values=ows.colors)
 ab.yr<-lmer(log.abund~-1+code+code:year+(1|cell) + (1|CountID:cell), data=naba.1)
 summary(ab.yr)
-#ab2.yr<-lmer(abund.bph~-1+code+code:year+(1|cell) + (1|CountID:cell), data=naba.1)
-#summary(ab2.yr)
 
 
-summary(naba.1)
+# Abundance model ---------------------------------------------------------
+#weighted LMER with interactions of variables with overwintering code
+#random effect of cell
+#Additional model selection further below
+abundance.fullmodel<-lmer(log.abund~-1+code*(dev.pc1+logab.py+dev.pc2+lag.dev+on.dev+abslag+dur.dev+MonthF*ObsDay+Year+cold.dev+warm.dev)+(1|cell) + (1|CountID:cell), data=na.omit(naba.1))
+summary(abundance.fullmodel)
+abundance.best.1<-get_model(step(abundance.fullmodel))
+summary(abundance.best.1)$call
 
-naba.noNA<-na.omit(naba.1)
-ab.1<-lmer(log.abund~-1+code*(dev.pc1+logab.py+dev.pc2+on.dev+abslag+dur.dev+MonthF*ObsDay+year+cold.dev)+(1|cell) + (1|CountID:cell), data=naba.noNA)
-summary(ab.1)
-best1<-get_model(step(ab.1))
-summary(best1)
-best1b<-lmer(log.abund ~ code + logab.py + abslag  + code:dev.pc1 + code:dev.pc2 +  
-              code:on.dev + code:dur.dev + code:MonthF + code:ObsDay +  
-              code:year + code:cold.dev + code:MonthF:ObsDay - 1 + (1 | cell) +  
-              (1 | CountID:cell), data=naba.noNA)
+#same model but with parameters for either all overwintering groups together, or interactive effect, for interpretability
+best1b<-lmer(log.abund ~ code + logab.py + code:dev.pc1 + code:dev.pc2 +  
+              code:lag.dev + code:dur.dev + code:MonthF +   
+              code:Year + code:cold.dev + code:MonthF:ObsDay + code:abslag - 1 + (1 | cell) +  
+              (1 | CountID:cell), data=na.omit(naba.1))
+
+
 summary(best1b)
 r.squaredGLMM(best1b)
 extractAIC(best1b)
+bestmodel<-best1b
 
+write.csv(summary(bestmodel)$coefficients, file=abundance.model.fit)
 
+# FIGURE 3: Model results for abundance -----------------------------------
+(plot.pc1<-plot_model(bestmodel, type = "eff", terms = c("dev.pc1", "code"), colors=ows.colors, alpha=0.5, se=TRUE, title="Adult abundance ~ PC1") + 
+      theme_classic() + ylim(-1,4.5) + 
+      labs(x="PC1 ---> early greenup + warm spring", y="Log adult abundance", color="Group", fill="Group") +
+      theme(legend.position="none"))
 
-includeNA<-T
-if(includeNA==T) {
-  ab.yr.full<-lmer(log.abund~-1+code*(dev.pc1+logab.py+dev.pc2+on.dev+abslag+dur.dev+MonthF*ObsDay+year+cold.dev)+(1|cell) + (1|CountID:cell), data=naba.1)
-  summary(ab.yr.full)
-  extractAIC(ab.yr.full)
-  ab.yr.1<-lmer(log.abund~-1+code+code:dev.pc1+code:logab.py+code:dev.pc2+code:on.dev+code:abslag+code:dur.dev+code:MonthF + code:MonthF:ObsDay+code:cold.dev+code:year+(1|cell) + (1|CountID:cell), data=naba.1)
-  extractAIC(ab.yr.1)
-  (t2<-as_tibble(bind_cols(Parameters=row.names(summary(ab.yr.1)$coefficients),summary(ab.yr.1)$coefficients)) %>% arrange(abs(`t value`)))
+(plot.pc2<-plot_model(bestmodel, type = "eff", terms = c("dev.pc2", "code"), colors=ows.colors, alpha=0.5,se=TRUE, title="Adult abundance ~ PC2") + 
+      theme_classic() +  ylim(0.2,3.5) + 
+      labs(x="PC2 --> greenup later than expected", y="Log adult abundance", color="Group", fill="Group") +
+      theme(legend.position="none"))
   
-  best.model<-ab.yr.1
+(plot.old<-plot_model(bestmodel, type = "eff", terms = c("lag.dev", "code"), colors=ows.colors, alpha=0.5, se=TRUE, title="Adult abundance ~ open canopy lag") + 
+      theme_classic() + ylim(-1,4.5) + 
+      labs(x="Open greenup lag deviation", y="", color="Group", fill="Group") +
+      theme(legend.position="none"))
+  
+(plot.dur<-plot_model(bestmodel, type = "eff", terms = c("dur.dev", "code"), colors=ows.colors, alpha=0.5, se=TRUE, title="Adult abundance ~ duration") + 
+      theme_classic() + ylim(0.2,3.5) + 
+      labs(x="Flight duration deviation", y="", color="Group", fill="Group") +
+      theme(legend.position="none"))
+  
+(plot.yr<-plot_model(bestmodel, type = "eff", terms = c("Year", "code"), colors=ows.colors, alpha=0.5, se=TRUE, title="Adult abundance ~ year") + 
+      theme_classic() + ylim(0.2,3.5) + 
+      labs(x="Year", y="", color="Group", fill="Group") +
+      theme(legend.position="none"))
+  
+#(legend.2<-ggplot(data=naba.1, aes(x=dev.pc1, y=on.dev, color=code, fill=code)) + 
+#      geom_smooth(method="lm", alpha=0.5) + scale_color_manual(values=ows.colors, aesthetics=c("color","fill"), labels=c("BOE","BOL","BOP")) +
+#      theme(legend.position="right",legend.key.size = unit(1, 'cm'),legend.title = element_text(size=14)) + labs(color="Group", fill="Group") )
+#l2<-get_legend(legend.2)
+
+#Create a panel legend with shapes for each group
+x11<-data.frame(group=c("BOE","BOL","BOP"),x1=c(1,1,1),y1=c(1,2,3),pt=c(1.5,2.5,3.5))
+
+#overwinter group images
+BOEraster = readPNG("data/images/boe_art.png")
+BOLraster = readPNG("data/images/bol_art.png")
+BOPraster = readPNG("data/images/bop_art.png")
+x1<-c(1,1,1)
+y1<-c(1:3)
+
+rev.col<-rev(ows.colors)
+(legend3<- ggplot(data=x11, aes(x=x1, y=y1)) +  
+    geom_rect(xmin=x1, xmax=x1+1,ymin=y1,ymax=y1+1, fill=rev.col, alpha=0.5) +
+    geom_segment(x=x1,xend=x1+1,y=y1+0.5,yend=y1+0.5, color=rev.col, alpha=1) +
+    ylim(-.5,5) + xlim(0,5) + theme_nothing() + 
+      annotate("text", x = rep(2.6,3), y = c(1:3)+.5, label = c("BOP", "BOL", "BOE"), size=6) + 
+      annotation_raster(BOPraster, xmin = 3.1, xmax=4.5,
+                      ymin = 1.2, ymax = 1.8, interpolate=T) +
+    annotation_raster(BOLraster, xmin = 3.1, xmax = 4.3, 
+                      ymin = 2.2, ymax = 2.8, interpolate = T) + 
+  annotation_raster(BOEraster, xmin = 3.1, xmax = 4.5, 
+                    ymin = 3.2, ymax = 3.8, interpolate = T) 
+)
+  
+margin = theme(plot.margin = unit(c(0.1,0,0.5,0), "cm"))
+fig3a<-plot.pc1 + margin
+fig3b<-plot.old + margin
+
+(figabund<-grid.arrange(fig3a, fig3b, legend3, plot.pc2, plot.dur,plot.yr,nrow=2))
+ggsave(figabund, width=10,height=6, units="in", file=paste0("output/figures/abund.dev3",rundat,".png"))
+  
+    
+
+# Model Selection ---------------------------------------------------------
+
+
+  ##REGSUBSETS MODELS
+  b<-regsubsets(log.abund~-1+code+code:dev.pc1+code:dev.pc2+code:open.lag.dev+code:on.dev+code:abs.surveylag+code:dur.dev+code:MonthF + code:MonthF:ObsDay+code:cold.dev+code:logab.py+code:Year+(1|cell), data=naba.1,nbest=1)
+  b<-regsubsets(log.abund~-1+dev.pc1+dev.pc2+open.lag.dev+on.dev+abs.surveylag+dur.dev+MonthF + MonthF:ObsDay+cold.dev+logab.py+Year, data=filter(naba.1,code=="RE"),nbest=1)
+  
+  
+  
+  
+  ab.yr.1d<-lmer(log.abund~-1+code+code:dev.pc1+code:dev.pc2+code:on.dev+abs.surveylag+code:dur.dev+code:MonthF + code:MonthF:ObsDay+code:cold.dev+logab.py+code:Year+(1|cell) + (1|CountID:cell), data=naba.1)
+  summary(ab.yr.1d)
+  extractAIC(ab.yr.1d)
+  
+  ab.yr.1e<-lmer(log.abund~-1+code+code:dev.pc1+code:dev.pc2+code:open.lag.dev+abs.surveylag+code:dur.dev+code:MonthF+code:cold.dev+logab.py+code:Year+(1|cell) + (1|CountID:cell), data=naba.1)
+  summary(ab.yr.1e)
+  extractAIC(ab.yr.1e)
+  
+  
+  
+  
+    ab.yr.1b<-lmer(log.abund~-1+code+code:logab.py+(1|cell) + (1|CountID:cell), data=naba.1)
+  extractAIC(ab.yr.1b)
+  
+  
+    best.model<-ab.yr.1
   ab.yr.noint1<-lmer(log.abund~-1+code+dev.pc1+code:logab.py+code:dev.pc2+code:on.dev+code:abslag+code:dur.dev+code:MonthF + code:MonthF:ObsDay+code:cold.dev+code:year+(1|cell) + (1|CountID:cell), data=naba.1)
   extractAIC(ab.yr.noint1)
   if(extractAIC(ab.yr.noint1)[2]<extractAIC(best.model)[2]) {best.model<-ab.yr.noint1}
@@ -152,6 +248,9 @@ if(includeNA==T) {
     ab.vif<-lmer(log.abund~logab.py+code+dev.pc1+dev.pc2+on.dev+abslag+dur.dev+ObsDay:MonthF+cold.dev+year+(1|cell) + (1|CountID:cell), data=naba.1)
     vif(ab.vif)
     
+    lm1<-lm(log.abund ~ -1 + code + code:dev.pc1 + code:dev.pc2 + code:open.lag.dev +  
+              abs.surveylag + code:dur.dev + code:MonthF + code:MonthF:ObsDay +  
+              code:cold.dev + logab.py + code:Year, data=naba.1)
     
 best.model<-best1b
 
@@ -219,23 +318,27 @@ abund.newDat <- data.frame(cell = rep(507,nrep), CountID=rep(497,nrep),
   mutate(codelabel = factor(codelabel),code=factor(code)) %>%
   mutate(codelabel=fct_reorder(codelabel, as.numeric(code)))
 
-dev.maxvals<-(as.numeric(apply(na.omit(naba.1[,c(2,12,16,19,24:37)]),2,FUN=max)))
-dev.minvals<-(as.numeric(apply(na.omit(naba.1[,c(2,12,16,19,24:37)]),2,FUN=min)))
+dev.maxvals<-(as.numeric(apply(na.omit(naba.1[,c(2,12,18:20,22:26,28,34,40:41)]),2,FUN=max)))
+dev.minvals<-(as.numeric(apply(na.omit(naba.1[,c(2,12,18:20,22:26,28,34,40:41)]),2,FUN=min)))
 dev.intervals<-round((dev.maxvals-dev.minvals)/20,3)
-dev.names<-names(naba.1)[c(2,12,16,19,24:37)]
+dev.names<-names(naba.1)[c(2,12,18:20,22:26,28,34,40:41)]
 
 #pc1 x year
 newpc1<- dev.minvals[which(dev.names=="dev.pc1")]+0:19*dev.intervals[which(dev.names=="dev.pc1")]
 newpc2<- dev.minvals[which(dev.names=="dev.pc2")]+0:19*dev.intervals[which(dev.names=="dev.pc2")]
 
+
+best.model<-ab.yr.1c
+
+
 newyr<-0:19
 nrep<-1200
-minpc1<-naba.noNA %>% group_by(year) %>% summarize(minpc1=min(dev.pc1, na.rm=T),maxpc1=max(dev.pc1, na.rm=T))
+minpc1<-naba.1 %>% group_by(year) %>% summarize(minpc1=min(dev.pc1, na.rm=T),maxpc1=max(dev.pc1, na.rm=T))
 remove.cols<-which(names(abund.newDat) %in% c("dev.pc1","year"))
 abund.newDat1<-cbind(abund.newDat[,-remove.cols], dev.pc1=rep(newpc1,60), year=rep(newyr,each=60))
 abund.newDat1$pred <- predict(best.model, abund.newDat1, allow.new.levels =T)
 
-lims.ab<-naba.noNA %>%
+lims.ab<-naba.1 %>%
   group_by(code) %>%
   summarize(minyr=min(year, na.rm=T),maxyr=max(year, na.rm=T),
             minpc1=min(dev.pc1, na.rm=T),maxpc1=max(dev.pc1, na.rm=T),
@@ -248,7 +351,7 @@ abund.newDat.F1<-inner_join(abund.newDat1,lims.ab) %>%
 
 
 ##for fig 
-pc1.yr<-naba.noNA %>% filter(year>0) %>%group_by(year) %>% 
+pc1.yr<-naba.1 %>% filter(year>0) %>%group_by(year) %>% 
   summarize(minpc1=min(dev.pc1, na.rm=T),maxpc1=max(dev.pc1, na.rm=T),
             minpc2=min(dev.pc2, na.rm=T),maxpc2=max(dev.pc2, na.rm=T))
 
@@ -278,17 +381,19 @@ abund.newDat.F2<-inner_join(abund.newDat2,lims.ab) %>%
 
 library(viridis)
 library(metR)
-n11<-naba.noNA %>% filter(year<18) %>% mutate(Year=year+2000) %>% group_by(cell, year, Year) %>% summarize (dev.pc1=mean(dev.pc1, na.rm=T))
+n11<-naba.1 %>% filter(year<18) %>% mutate(Year=year+2000) %>% group_by(cell, year, Year) %>% summarize (dev.pc1=mean(dev.pc1, na.rm=T))
 F.abund0<-ggplot(data=n11, aes(x=Year, y=dev.pc1, group=Year)) + geom_boxplot() + labs(y=" ")                 
 
 ab.col<-c("wheat1","coral4") ## coral4 ##viridis_pal(option="B")(10)[c(10,6)]
-
-F.abund.1<-ggplot(data=abund.newDat.F1, aes(x=year+2000, y=dev.pc1, fill=pred)) + 
-  geom_tile() +  labs(x="Year", y="Later greenup + colder <----- Standardized PC1 -----> Early greenup + warmer") + 
-  scale_fill_gradient(name="Log abundance", low=ab.col[1], high=ab.col[2], limits=c(0.5,3.6)) + 
+and1<-abund.newDat.F1 %>% mutate(pred1=exp(pred))
+  
+ 
+F.abund.1<-ggplot(data=and1, aes(x=year+2000, y=dev.pc1, fill=pred1)) + 
+  geom_tile() +  labs(x="Year", y="Later greenup + colder <----- AD.PC1 -----> Early greenup + warmer") + 
+  scale_fill_gradient(name="Butterflies per hour", low=ab.col[1], high=ab.col[2], limits=c(0,27)) + 
   #scale_fill_viridis(name="Log abundance", option="A", begin=0.2,end=1, limits=c(0.3,3.6)) + #min(abund.newDat.F1$pred),max(abund.newDat.F1$pred))) +
-  geom_contour(aes(x=year+2000, y=dev.pc1, z=pred), color="black", binwidth=.2) + 
-  geom_text_contour(aes(z=pred), nudge_y=-.2,binwidth=.1) + theme(legend.position="bottom") + 
+  geom_contour(aes(x=year+2000, y=dev.pc1, z=pred1), color="black", binwidth=2) + theme_classic() + 
+  geom_text_contour(aes(z=pred1), nudge_y=-.2,binwidth=2) + theme(legend.position="bottom") + 
   #  geom_line(data=pc1.yr,  inherit.aes = FALSE,aes(x=year+2000, y=maxpc2), color="black") + 
 #  geom_line(data=pc1.yr,  inherit.aes = FALSE,aes(x=year+2000, y=minpc2), color="white") + 
 #  geom_point(data=minpc1, aes(x=year, y=minpc1), shape=24, fill=NA, color="white") + 
@@ -302,41 +407,75 @@ F.abund.1
 #pc1 x year
 
 ##for fig 
-F.abund.2<-ggplot(data=abund.newDat.F2, aes(x=cold.dev, y=dev.pc1, fill=pred)) + 
-  geom_tile() +  labs(x="Cold winter days", y="PC1 deviation") + 
-  #geom_point(x=2,y=0.5,shape=24, color="white", size=1.5) + 
-  scale_fill_gradient(name="Log abundance", low=ab.col[1], high=ab.col[2], limits=c(0.3,3.6)) + 
+#F.abund.2<-ggplot(data=abund.newDat.F2, aes(x=cold.dev, y=dev.pc1, fill=pred)) + 
+#  geom_tile() +  labs(x="Cold winter days", y="PC1 deviation") + 
+#  #geom_point(x=2,y=0.5,shape=24, color="white", size=1.5) + 
+#  scale_fill_gradient(name="Log abundance", low=ab.col[1], high=ab.col[2], limits=c(0.3,3.6)) + 
   #scale_fill_viridis(name="Log abundance", option="A", begin=0.2,end=1,limits=c(0.3,3.6)) + #
-  facet_wrap(~codelabel)
-F.abund.2
+#  facet_wrap(~codelabel)
+#F.abund.2
 
-save(F.abund.2,file="output/abund.fig.2.png")
+#save(F.abund.2,file="output/abund.fig.2.png")
 
 
 #### FIG: winter and onset deviation
 #pc1 x year
+#### FIG: winter and onset deviation
+#pc1 x year
+newcold<-dev.minvals[which(dev.names%in%"cold.dev")]+0:19*(dev.intervals[which(dev.names%in%"cold.dev")])
+newod<-(-8)+0:19
+nrep<-1200
+
+remove.cols<-which(names(abund.newDat) %in% c("cold.dev","on.dev"))
+abund.newDat3<-cbind(abund.newDat[,-remove.cols], cold.dev=rep(newcold,60), on.dev=rep(newod,each=60))
+abund.newDat3$pred <- predict(best.model, abund.newDat3, allow.new.levels =T)
+
+lims.ab<-naba.1 %>%
+  group_by(code) %>%
+  summarize(minyr=min(year, na.rm=T),maxyr=max(year, na.rm=T),
+            minpc1=min(dev.pc1, na.rm=T),maxpc1=max(dev.pc1, na.rm=T),
+            minpc2=min(dev.pc2, na.rm=T), maxpc2=max(dev.pc2, na.rm=T),
+            mincold=min(cold.dev, na.rm=T), maxcold=max(cold.dev, na.rm=T),
+            minondev=min(on.dev, na.rm=T)-1, maxondev=max(on.dev, na.rm=T)+1)
+
+abund.newDat.F3<-inner_join(abund.newDat3,lims.ab) %>%
+  mutate(f1=ifelse(on.dev>=minondev,ifelse(on.dev<=maxondev,1,0),0)+ifelse(dev.pc2>=minpc2,ifelse(dev.pc2<=maxpc2,1,0),0)) %>%
+  filter(f1==2) %>% mutate(codelabel = factor(codelabel),code=factor(code)) %>%
+  mutate(codelabel=fct_reorder(codelabel, as.numeric(code)))
+
+abund.newDat.F3<-abund.newDat.F3 %>% mutate(pred1=exp(pred))
 
 ##for fig 
-abund.newDat.F3<-abund.newDat.F3 %>% mutate(pred1=round(pred,3))
+library(viridis)
+F.abund.3<-ggplot(data=abund.newDat.F3, aes(x=on.dev, y=cold.dev, fill=pred1)) + 
+  geom_tile() +  labs(x="Onset deviation (wks)", y="Winter cold deviation") + 
+  scale_fill_viridis(name="Butterflies per hour") + 
+  facet_wrap(~codelabel)
+F.abund.3
+
+
+##for fig 
+abund.newDat.F3<-abund.newDat.F3 %>% mutate(pred1=round(exp(pred),3), ondevday=on.dev*7)
 
 #Our transformation function
 scaleFUN <- function(x) round(x,2)
 
-F.abund.3<-ggplot(data=filter(abund.newDat.F3), aes(x=on.dev, y=cold.dev, fill=pred1)) + 
-  geom_tile() +  labs(y="Std. # days below 0 C (winter)", x="Std. adult onset (wks)") + 
-  scale_fill_gradient(name="Log abundance", low=ab.col[1], high=ab.col[2], limits=c(0.5,3.6)) + 
+F.abund.3<-ggplot(data=filter(abund.newDat.F3), aes(y=ondevday, x=cold.dev, fill=pred1)) + 
+  geom_tile() + 
+  scale_fill_gradient(name="Butterflies per hour", low=ab.col[1], high=ab.col[2], limits=c(0,27)) + 
   #scale_fill_viridis(name="Log abundance", option="A", begin=0.2,end=1,limits=c(0,4)) + #limits = c(min(abund.newDat.F1$pred),max(abund.newDat.F1$pred))) +
-  theme(legend.position="bottom") +  
-  xlim(-10,12) + ylim(-4,8) + 
-  geom_contour2(aes(x=on.dev, y=cold.dev, z=pred1),breaks=MakeBreaks(binwidth = NULL, bins = 5, exclude = NULL),
+  scale_x_continuous(name="Winter cold days deviation", limits=c(-4.5,6.5), breaks=c(-4,0,4)) + 
+  scale_y_continuous(name="Adult onset deviation (days)", limits=c(-60,80), breaks=c(-50,0,50)) + 
+  geom_contour2(aes(y=ondevday, x=cold.dev, z=pred1),breaks=MakeBreaks(binwidth = NULL, bins = 4, exclude = NULL),
                 global.breaks = FALSE, color="black") + #,label.placer = label_placer_n(n = 3)) + 
-  geom_text_contour(aes(x=on.dev, y=cold.dev, z=pred1,label=scaleFUN(..level..)),
-                     global.breaks = FALSE, color="black") +
+  geom_text_contour(aes(y=ondevday, x=cold.dev, z=pred1,label=scaleFUN(..level..)),
+                     global.breaks = FALSE, color="black") + theme_classic() + 
+  theme(legend.position="bottom") +   
   #geom_text_contour(aes(z=pred1),breaks=MakeBreaks(binwidth = NULL, bins = 5, exclude = NULL),global.breaks = FALSE, nudge_y=-.2) + 
   facet_wrap(~codelabel, nrow=3)
 F.abund.3
 
-mycolors<-viridis_pal()(6)[c(1,3,6)] #c('#440154','#39568C','#FDE725')  #viridis(20, option="D")[c(1,6,20)]
+ows.colors<-viridis_pal()(8)[c(1,5,7)] #c('#440154','#39568C','#FDE725')  #viridis(20, option="D")[c(1,6,20)]
 
 Fabund30<-ggplot(data=(naba.1), aes(x=on.dev, y=cold.dev, color=code)) + 
   geom_contour2(aes(x = on.dev, y = cold.dev), alpha = 0.8) + 
@@ -432,9 +571,11 @@ F.abund.3c
 
 
 library(gridExtra)
-(figabund<-grid.arrange(F.abund.3,F.abund.1,Fabund31,F.abund0, nrow=2, ncol=2, heights=c(7.5,2))) 
-ggsave(figabund,file="output/figures/fig3new.png", height=10, width=7)
+(figabund<-grid.arrange(F.abund.3,F.abund.1, nrow=1, ncol=2, heights=c(7.5,2))) 
+ggsave(figabund,file="output/figures/fig3.10.png", height=10, width=7)
 
+(figabund<-grid.arrange(F.abund.1,F.abund.3, nrow=1, ncol=2)) 
+ggsave(figabund,file="output/figures/fig3.11.png", height=10, width=7)
 
                         
 
@@ -914,39 +1055,6 @@ ggplot(data=)
 ggplot(data=pheno.dev, aes(x=year, y=q5_dev, color=code)) + geom_point() + geom_smooth(method="lm") + 
   labs(y="Onset deviation")
 
-
-#### FIG: winter and onset deviation
-#pc1 x year
-newcold<-dev.minvals[which(dev.names%in%"cold.dev")]+0:19*(dev.intervals[which(dev.names%in%"cold.dev")])
-newod<-(-8)+0:19
-nrep<-1200
-
-remove.cols<-which(names(abund.newDat) %in% c("cold.dev","on.dev"))
-abund.newDat3<-cbind(abund.newDat[,-remove.cols], cold.dev=rep(newcold,60), on.dev=rep(newod,each=60))
-abund.newDat3$pred <- predict(best.model, abund.newDat3, allow.new.levels =T)
-
-lims.ab<-naba.1 %>%
-  group_by(code) %>%
-  summarize(minyr=min(year, na.rm=T),maxyr=max(year, na.rm=T),
-            minpc1=min(dev.pc1, na.rm=T),maxpc1=max(dev.pc1, na.rm=T),
-            minpc2=min(dev.pc2, na.rm=T), maxpc2=max(dev.pc2, na.rm=T),
-            mincold=min(cold.dev, na.rm=T), maxcold=max(cold.dev, na.rm=T),
-            minondev=min(on.dev, na.rm=T)-1, maxondev=max(on.dev, na.rm=T)+1)
-
-abund.newDat.F3<-inner_join(abund.newDat3,lims.ab) %>%
-  mutate(f1=ifelse(on.dev>=minondev,ifelse(on.dev<=maxondev,1,0),0)+ifelse(dev.pc2>=minpc2,ifelse(dev.pc2<=maxpc2,1,0),0)) %>%
-  filter(f1==2) %>% mutate(codelabel = factor(codelabel),code=factor(code)) %>%
-  mutate(codelabel=fct_reorder(codelabel, as.numeric(code)))
-
-
-
-##for fig 
-library(viridis)
-F.abund.3<-ggplot(data=abund.newDat.F3, aes(x=on.dev, y=cold.dev, fill=pred)) + 
-  geom_tile() +  labs(x="Onset deviation (wks)", y="Winter cold deviation") + 
-  scale_fill_viridis(name="Log abundance") + 
-  facet_wrap(~codelabel)
-F.abund.3
 
 
 #######################3

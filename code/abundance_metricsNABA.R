@@ -32,7 +32,7 @@ sqlTables(con1)
 #fetch observations table, filter to surveys with at least 10 species in the applicable years
 naba.obs<-sqlFetch(con1,"NFJ_Observations to 2018")  %>% 
   group_by(CountID, SurveyID) %>% add_tally(name="RSR") %>% 
-  filter(RSR>=minSR, ObsYear%in%year.filt) %>%
+  filter(RSR>=minSR) %>% #, ObsYear%in%year.filt) %>%
   dplyr::select(ID:SightID,FromDate:NumSeen)
 
 #fetch surveys table
@@ -47,7 +47,15 @@ naba.surveys<-sqlFetch(con1,"NFJ_Surveys to 2018") %>%
 #Merge surveys and circle locations to tag by hex cell
 survey.data<-merge(naba.surveys, naba.circles, by.x=c("CountID","Lat","Lng"), by.y=c("CountID","Lat","Lng")) 
 
+##For Casey
+casey.naba<-survey.data %>%
+  dplyr::select(CountID, SurveyID, Lat, Lng, ObsYear) %>%
+  dplyr::group_by(Lat, Lng, ObsYear) %>%
+  tally()
+  #dplyr::summarize(minyr=min(ObsYear, na.rm=T), maxyr=max(ObsYear, na.rm=T), nyr=n()) 
+casey.naba
 
+write.csv(casey.naba, file="nabaAbund_locYear.csv")
 ##Import Species Trait Data & Extract OWS group + Species 
 trait.data<-read_xlsx("data/naba/SpeciesTraitsLR.xlsx") %>% 
   mutate(ScientificName=paste(`NABA Genus`,ifelse(is.na(`NABA species`),"",`NABA species`),sep=" ")) %>%
@@ -77,11 +85,23 @@ naba.abundance<-merge(obs.data, survey.data, by=intersect(names(obs.data), names
 mutate(bph=NumSeen/Party_Hours, doy=yday(SurveyDate), sp1=1) %>%
 group_by(cell, ObsYear, CountID,SurveyID, SurveyDate) %>% mutate(SR=sum(sp1)) %>%
 filter(bph<=maxBPH, SR>=minSR) %>%  ##, SR>=minSR
-group_by(cell, Lat, Lng, CountID, SurveyID, ObsYear, ObsMonth, doy, group, ) %>%
+group_by(cell, Lat, Lng, CountID, SurveyID, ObsYear, ObsMonth, doy, group ) %>%
 summarize(abund.bph=round(sum(bph),3), log.abund=round(log(sum(bph)),3), SR=sum(sp1))
+
 
 #Write abundance metrics data table to csv
 write.csv(naba.abundance, file="data/derived/naba_OWS_abundances.csv")
 
-naba.abundance %>% filter(bph>100)
+naba.abundance %>% filter(abund.bph>100)
+summary(naba.abundance)
+
+naba.abundance<-naba.abundance %>%
+  dplyr::select(cell,latitude=Lat, longitude=Lng, CountID, year=ObsYear, doy, group, abund.bph, n.sp=SR)
+write.csv(naba.abundance, file="NABA_grouped_abundance.csv")
+
+naba1<-naba.abundance %>% filter(Lat<30,abund.bph<100, group=="RL") %>% 
+  group_by(CountID,Lat,Lng) %>% tally() %>%
+  group_by(CountID) %>% tally()
+
+#summary(table(naba1$CountID))
 
