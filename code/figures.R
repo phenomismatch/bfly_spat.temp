@@ -132,29 +132,29 @@ fig1b
 load(pheno.dev.file)
 
 pheno.dmean<-pheno.input.dev %>% group_by(code, year) %>% 
-  summarize(onset.dev=onset.dev, wm=weighted.mean(onset.dev, onset.ci)) %>% 
-  mutate(group=ifelse(code=="RE","BOE",ifelse(code=="RL","BOL","BOP")), year=year+2000) %>%
+  summarize(onset.dev=onset.dev, wm=weighted.mean(onset.dev, onset.ci, na.rm=T)) %>% 
+  mutate(group=code,year=year+2000) %>%  ##group=ifelse(code=="RE","EO",ifelse(code=="RL","LO","PO")),
   filter(year %in% temporal.domain)
 
 fig1c<-ggplot(data=filter(pheno.dmean, year<2018), aes(x=year, y=onset.dev, color=group)) + 
   geom_smooth(method="lm", aes(fill=group),color="black", alpha=0.5,linetype=2) + 
   geom_line(data=pheno.dmean, aes(x=year, y=wm, color=group), size=.8) + 
-  scale_color_manual(values= c("BOE" = ows.colors[1],"BOL" = ows.colors[2],"BOP" = ows.colors[3])) + 
-  scale_fill_manual(values= c("BOE" = ows.colors[1],"BOL" = ows.colors[2],"BOP" = ows.colors[3])) + 
+  scale_color_manual(values= c("EO" = ows.colors[1],"LO" = ows.colors[2],"PO" = ows.colors[3])) + 
+  scale_fill_manual(values= c("EO" = ows.colors[1],"LO" = ows.colors[2],"PO" = ows.colors[3])) + 
   xlim(2000,2017) + 
   labs(x="Year", y="Standardized adult onset", color="Group", fill="Group", tag="C") 
 fig1c
 
 ####################### FIG 1 D - abundance across years
 abund.mean<-abund %>% group_by(group, ObsYear) %>% dplyr::summarize(Abundance=log(mean(abund.bph, na.rm=T)), Ab1=exp(Abundance)) %>%
-  dplyr::mutate(group=ifelse(group=="RE","BOE",ifelse(group=="RL","BOL","BOP")))
+  dplyr::mutate(group=ifelse(group=="RE","EO",ifelse(group=="RL","LO","PO")))
 
 
 fig1d<-ggplot(data=abund.mean, aes(x=ObsYear, y=Abundance, color=group)) + 
-  geom_smooth(method="lm", aes(fill=group),color="black", linetype=2) + 
+  geom_smooth(method="lm", aes(fill=group),color="black",alpha=0.5, linetype=2) + 
   geom_line(aes(color=group), size=0.8) + 
-  scale_color_manual(values= c("BOE" = ows.colors[1],"BOL" = ows.colors[2],"BOP" = ows.colors[3])) + 
-  scale_fill_manual(values= c("BOE" = ows.colors[1],"BOL" = ows.colors[2],"BOP" = ows.colors[3])) + 
+  scale_color_manual(values= c("EO" = ows.colors[1],"LO" = ows.colors[2],"PO" = ows.colors[3])) + 
+  scale_fill_manual(values= c("EO" = ows.colors[1],"LO" = ows.colors[2],"PO" = ows.colors[3])) + 
   labs(x="Year", y="Log abundance", color="Group", fill="Group", tag="D")
 fig1d
 
@@ -162,7 +162,7 @@ fig1d
 (fig1<-grid.arrange(arrangeGrob(fig1a, fig1b, fig1c, fig1d, nrow=2, heights=c(2,1.5))))
 
 
-ggsave(filename="output/figures/Fig1.202201.png",fig1,width = 12, height = 10)
+ggsave(filename="output/figures/Fig1.2023.png",fig1,width = 12, height = 10)
 
 
 
