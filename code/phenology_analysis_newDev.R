@@ -113,6 +113,7 @@ print(paste("partial r2 for spring precip:",round(r.squaredGLMM(onset.dev.final)
 (onset.params<-as_tibble(summary(onset.dev.best)$coefficients) %>%
   mutate(Estimate=round(Estimate, 4), StdError=round(`Std. Error`,4),parameter=row.names(summary(onset.dev.final)$coefficients)))
 write_csv(onset.params, file=onset.dev.output.csv)
+r.squaredGLMM(onset.dev.best)
 #save(onset.dev.best, file=onset.dev.model.file)
 plot_model(onset.dev.best,show.values = TRUE, value.offset = .5)
 

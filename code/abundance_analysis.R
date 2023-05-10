@@ -18,7 +18,7 @@ theme_set(theme_sjplot())
 ###PHENO DATA
 load("data/derived/pheno.RData")
 #### ENV DATA
-load("data/derived/env.input.RData")
+load("data/derived/env.input.new.RData")
 pheno1<-pheno.quant %>%
   dplyr::select(q50,year,cell,code)
 
@@ -68,6 +68,19 @@ naba.1<-naba.1 %>% mutate(MonthF=as.factor(ObsMonth), ObsDay=as.numeric(format(a
 
 save(naba.1, file="data/abund.input1005.RData")
 
+(n.cellyr.summary<-naba.1 %>%
+  group_by(cell, code) %>%
+  summarize(x1=1) %>%
+  group_by(code) %>%
+  summarize(cs1=sum(x1))
+)
+
+(pdev.sum<-pheno.dev %>%
+  group_by(cell, code) %>%
+  summarize(x1=1) %>%
+  group_by(code) %>%
+  summarize(cs1=sum(x1))
+) 
 
 ggplot(data=naba.1, aes(x=onset.dev, y=log.abund, color=code)) + 
   geom_smooth(method="lm")
