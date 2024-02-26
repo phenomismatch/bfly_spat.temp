@@ -47,8 +47,6 @@ pheno.dev<-left_join(pheno.quant, pheno.cell.baseline, by=c("cell", "code"))  %>
 save(pheno.dev, file="data/derived/phenoDev.RData")
 save(pheno.quant, file="data/derived/phenoQ.RData")
 
-#x<-read_csv("data/envir/cpcGDD_hex_2000-2020.csv")
-
 
 ##### END
 
