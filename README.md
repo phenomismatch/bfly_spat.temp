@@ -1,6 +1,6 @@
 # Butterfly_Abundance_and_Phenology
 
-[![Zenodo DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.4532885.svg)](https://doi.org/10.5281/zenodo.4532885)
+to do: Add Zenodo DOI
 
 Code for analyzing drivers of aggregate butterfly phenology and abundance by overwintering stage
 
