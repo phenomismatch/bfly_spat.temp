@@ -1,8 +1,8 @@
 ##Larsen et al.
 ##Butterfly phenology & abundance by overwinter stage
-##Submitted 2022-02
+##Accepted 2023-12
 ##Code by Elise Larsen, Georgetown University
-##File contents: R code to produce manuscript figures (Figure 1 & some supplements)
+##File contents: R code to produce manuscript Figure 1 & some supplemental figures
 
 #load libraries
 library(ggeffects)
@@ -23,7 +23,7 @@ land.map.file<-"data/maps/ne_50m_admin_1_states_provinces_lakes.shp"
 
 #file names: phenology & abundance metrics
 pheno.datafile<-"data/derived/adult_bfly_phenometrics_noCountCircles_withFull2020Data.csv"
-pheno.dev.file<-"data/derived/newphenodev.RData"
+pheno.dev.file<-"data/derived/phenodev.RData"
 abundance.file<-"data/derived/naba_OWS_abundances.csv"
 #other parameters
 temporal.domain<-c(2001:2017)
@@ -131,9 +131,9 @@ fig1b
 ####################### FIG 1 C - phenology across years
 load(pheno.dev.file)
 
-pheno.dmean<-pheno.input.dev %>% group_by(code, year) %>% 
+pheno.dmean<-pheno.dev %>% group_by(code, year) %>% 
   summarize(onset.dev=onset.dev, wm=weighted.mean(onset.dev, onset.ci, na.rm=T)) %>% 
-  mutate(group=code,year=year+2000) %>%  ##group=ifelse(code=="RE","EO",ifelse(code=="RL","LO","PO")),
+  mutate(group=ifelse(code=="RE","EO",ifelse(code=="RL","LO","PO")),year=year) %>%
   filter(year %in% temporal.domain)
 
 fig1c<-ggplot(data=filter(pheno.dmean, year<2018), aes(x=year, y=onset.dev, color=group)) + 
@@ -162,7 +162,7 @@ fig1d
 (fig1<-grid.arrange(arrangeGrob(fig1a, fig1b, fig1c, fig1d, nrow=2, heights=c(2,1.5))))
 
 
-ggsave(filename="output/figures/Fig1.2023.png",fig1,width = 12, height = 10)
+ggsave(filename="output/figures/Fig1.2024.png",fig1,width = 12, height = 10, dpi = 400)
 
 
 
