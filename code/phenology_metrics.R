@@ -4,9 +4,10 @@
 ## quantile phenometrics with CIs calculated by M Belitz, U Florida
 ## Species OWS traits compiled by GU Ries Lab
 # Modifications by E Larsen, Georgetown U
-# Updated 2022-01
+# Updated 2023-10
 
 library(tidyverse)
+save.output<-F #set to True to write output files
 
 load("data/spatial.domain.RData")
 
@@ -17,14 +18,12 @@ pheno.quant<-read_csv(pheno.datafile) %>% rename(cell=HEXcell) %>%
   filter(cell %in% STUDYCELLS, between(q50,152,243), !is.na(q5)) #, between(q50,152,243), !is.na(q5))
 
 
-
 ###Calculate durations
 pheno.quant<-pheno.quant %>%
 filter(year<2020) %>%
   mutate(qdur=q95-q5, qdur_low=q95_low-q5_high, qdur_high=q95_high-q5_low,
          q5_ci=q5_high-q5_low,q50_ci=q50_high-q50_low,
          q95_ci=q95_high-q95_low,qdur_ci=qdur_high-qdur_low)
-
 
 
 ##Calculate deviations for cells with data 2016-2019
@@ -43,10 +42,9 @@ pheno.dev<-left_join(pheno.quant, pheno.cell.baseline, by=c("cell", "code"))  %>
   dplyr::select(cell, year, code, q50, onset.dev=q5_dev, onset.ci=q5_ci, median.dev=q50_dev,median.ci=q50_ci, 
          dur.dev=qdur_dev, dur.ci=qdur_ci, cumObsDays,uniqObsDays,totalAbundance)
 
-
-save(pheno.dev, file="data/derived/phenoDev.RData")
-save(pheno.quant, file="data/derived/phenoQ.RData")
-
+if(save.output) {
+  save(pheno.dev, file="data/derived/phenoDev.RData")
+  save(pheno.quant, file="data/derived/phenoQ.RData")
+}
 
 ##### END
-
