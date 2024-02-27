@@ -1,5 +1,10 @@
+#Processing CPC climate data for use in analyses
+#Elise Larsen, Georgetown U
+#Run in R 4.1.2
 #rain: CPC Global Unified Gauge-Based Analysis of Daily Precipitation data provided by the NOAA PSL, Boulder, Colorado, USA, from their website at https://psl.noaa.gov 
 #yearly files: https://downloads.psl.noaa.gov/Datasets/cpc_global_precip/
+#inputs yearly CPC data files (not included in repo)
+#outputs: temp_mins_with_sd_09.RData, temp_maxs_with_sd_09.RData, precipSum.RData
 
 #libraries
 
@@ -12,21 +17,22 @@ library(ggcorrplot)
 library(RODBC)
 library(lubridate)
 
-#
-eq_doys<-c(80,172,266,356)
+#variables
+eq_doys<-c(80,172,266,356)  #DOYs of solstices & equinoxes
+save.output<-F #set to True to create output files from input files
 
 
-##CPC TEMPERATURE
+##CPC Data Extraction
+
+#Checking CPC dimensions
 nc_data <- nc_open('data/cpc_data/tmax.2001.nc')
 lon <- ncvar_get(nc_data, "lon")
-
 lat <- ncvar_get(nc_data, "lat", verbose = F)
 t <- ncvar_get(nc_data, "time")
 head(lon)
 
-tmax.array <- ncvar_get(nc_data, "tmax") # store the data in a 3-dimensional array
-dim(tmax.array)
-
+#function to extract temperature data by variable & year, with spatial hex grid
+#change var to "tmin" to get minimum daily temps
 cpc.temp.fx<- function(year, var="tmax") {
   filename=paste("data/cpc_data/",var,".",year,".nc", sep="")
   t1 <- brick(filename,varname=var,stopIfNotEqualSpaced=FALSE)
@@ -63,6 +69,7 @@ cpc.temp.fx<- function(year, var="tmax") {
   return(r.vals)
 }
 
+#function to extract precipitation data by variable & year, with spatial hex grid
 cpc.pcp.fx<- function(year, var="precip") {
   filename=paste("data/cpc_data/",var,".",year,".nc", sep="")
   t1 <- brick(filename,varname=var,stopIfNotEqualSpaced=FALSE)
@@ -99,8 +106,30 @@ cpc.pcp.fx<- function(year, var="precip") {
   return(r.vals)
 }
 
+## DATA EXTRACTION
+
+##EXTRACT TMIN AND TMAX
+tmin.list<-list()
+tmax.list<-list()
+for (y in 1:length(years)) {
+  tmin.list[[y]]<-cpc.temp.fx(years[y],"tmin")
+  tmax.list[[y]]<-cpc.temp.fx(years[y],"tmax")
+}
+
+tmin1<-as_tibble(bind_rows(tmin.list)) %>% dplyr::select(-var) %>% rename(sd.tmin=sd.)
+tmax1<-as_tibble(bind_rows(tmax.list)) %>% dplyr::select(-var) %>% rename(sd.tmax=sd.)
+if(save.output) {
+  save(tmin1, file="temp_mins_with_sd_09.RData")
+  save(tmax1, file="temp_maxs_with_sd_09.RData")
+}
+
+##EXTRACT PRECIPITATION
+precip.l1<-list()
+for (y in 1:length(years)) {
+  precip.l1[[y]]<-cpc.pcp.fx(years[y],"precip")
+}
+
 ##Extract precipitation data
-years<-c(2010:2019)
 
 pcp.data<-pcp.extract %>%
   filter(year>1998) %>%
@@ -108,26 +137,9 @@ pcp.data<-pcp.extract %>%
   group_by(cell,year,qtr) %>% 
   summarize(qtr.precip=sum(mean.precip), nvals=tally())
 
-pcp.data<-pcp.data %>%
-  mutate(season=ifelse(qtr<4,as.numeric(year),as.numeric(year)-1))
 
-tmin.list<-list()
-tmax.list<-list()
-precip.list<-list()
-for (y in 1:length(years)) {
-  tmin.list[[y]]<-cpc.temp.fx(years[y],"tmin")
-  tmax.list[[y]]<-cpc.temp.fx(years[y],"tmax")
-}
-
-precip.l1<-list()
-for (y in 1:length(years)) {
-  precip.l1[[y]]<-cpc.pcp.fx(years[y],"precip")
-}
-
-
-
-load("data/derived/precip.RData")
-eq_doys<-c(80,172,266,356)
+##PROCESS CLIMATE DATA
+#eq_doys<-c(80,172,266,356)
 precip<-bind_rows(precip.l1) %>%
   mutate(date=as.Date(Date, format="%Y.%m.%d"), year=as.numeric(year), 
          month=as.numeric(month), day=as.numeric(day), doy=yday(date),
@@ -144,12 +156,10 @@ precip.sum<-precip %>%
   group_by(cell,yr.1,season) %>%
   mutate(pcp.dev=(pcp.tot-mean.pcp), pcp.dev.std=(pcp.tot-mean.pcp)/mean.pcp, sd.dev=(pcp.sd-mean.sd)/mean.sd)
 summary(precip.sum)  
+
+if(save.output) {
 save(precip.sum,file="data/derived/precipSum.RData")
- 
-tmin1<-as_tibble(bind_rows(tmin.list)) %>% dplyr::select(-var) %>% rename(sd.tmin=sd.)
-tmax1<-as_tibble(bind_rows(tmax.list)) %>% dplyr::select(-var) %>% rename(sd.tmax=sd.)
-save(tmin1, file="temp_mins_with_sd_09.RData")
-save(tmax1, file="temp_maxs_with_sd_09.RData")
+}
 
 cpc.data<-merge(tmin1, tmax1, by=intersect(names(tmin1),names(tmax1)))
 nrow(cpc.data)
@@ -158,9 +168,9 @@ summary(cpc.data)
 
 
 ### CPC DERIVED METRICS 
-library(lubridate)
+#library(lubridate)
 #load degree day function
-source("C:/Users/eal109/Downloads/Git/Git/LabTraining/01GitRStudio/src/degday1.R")
+source("code/src/degday1.R")
 
 cpc.all<-cpc.data %>%
   dplyr::mutate(doy=yday(as.Date(paste(year,month, day, sep="-"),format="%Y-%m-%d")),
@@ -179,5 +189,7 @@ cpc.metrics<-cpc.all %>%
   group_by(cell, season1) %>%
   mutate(colddays=sum(cold, na.rm=T),warmdays=sum(warm, na.rm=T)) %>%
   filter(season2 %in% c(1,2))
-save(cpc.metrics, file="data/processed_cpc.RData")
 
+if(save.output) {
+  save(cpc.metrics, file="data/processed_cpc.RData")
+}
