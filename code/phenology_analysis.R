@@ -3,447 +3,294 @@
 ## Resident butterfly species groups defined by overwinter stage (OWS)
 ## Phenometrics estimated from Weibull (M Belitz)
 ## Species OWS traits compiled by GU Ries Lab
-#E Larsen, Georgetown U, Updated 2021-09
-
-
-
+#E Larsen, Georgetown U, Updated 2023-10
 
 #libraries
-library(tidyverse)
-library(ggplot2)
-library(ggcorrplot)
 library(lme4)
 library(lmerTest)
+library(MASS)
 library(MuMIn)
 library(car)
 library(sp)
 library(sjPlot)
 library(viridis)
+library(tidyverse)
+library(ggeffects)
+library(ggpubr)
+library(gridExtra)
 theme_set(theme_sjplot())
-###PHENO DATA
-load("data/derived/pheno.RData")
 
-(hexyrs<-pheno.quant %>% dplyr::select(year, cell)  %>% group_by(year, cell) %>% tally())
-nrow(pheno.quant)
+rundat<-Sys.Date()
+
+###Input Files
+pheno.data<-"data/derived/phenoDev.RData"
+pheno.data.st<-"data/derived/pheno.RData"
+env.dev.csv<-"data/derived/envDevs.csv"
+
+##Parameters
+mycolors<-viridis_pal()(8)[c(1,4,7)]
+ows.colors<-mycolors
+## Output files
+onset.dev.output.csv<-"output/ondev.params.csv"
+onset.dev.model.file<-"output/ondev.model.RData"
+
+#Load phenology data
+load(pheno.data)
+
 (dev.hexyrs<-pheno.dev %>% dplyr::select(year, cell)  %>% group_by(year, cell) %>% tally())
 nrow(pheno.dev)
 
-
-#Environmental data
-#env.var<-read_csv("data/derived/envir.csv")
-env.var<-read_csv("data/derived/envir2.csv") %>%
-  mutate(summer.gdd=summer.gdd/100)
-
-## Rescale summer gdd and calculate devisions
-env.dev<-env.var %>%
-  mutate(include=ifelse(year>2015,1,NA),baselinepc1=pc1*include, baselinepc2=pc2*include, basecold=colddays*include, basewarm=warmdays*include, basesummer=summer.gdd*include, baselag=gr_mn_lag*include) %>%
-  group_by(cell) %>%
-  mutate( pc1.dev=pc1-mean(baselinepc1, na.rm=T),pc2.dev=pc2-mean(baselinepc2, na.rm=T),
-          cold.dev=colddays-mean(basecold, na.rm=T), warm.dev=warmdays-mean(basewarm, na.rm=T),summer.dev=summer.gdd-mean(basesummer, na.rm=T), lag.dev=gr_mn_lag-mean(baselag, na.rm=T)) %>%
-  dplyr::select(year, cell, cell_lat, cell_lng, cellyr,pc1.dev, pc2.dev, open.lag=gr_mn_lag, lag.dev,cold.dev,warm.dev,summer.dev)
-
-#env.dev<-env.var %>%
-#  group_by(cell) %>%
-#  mutate( pc1.dev=warmearly-mean(warmearly, na.rm=T), pc2.dev=warmlateopen-mean(warmlateopen, na.rm=T))
-
+#Load environmental data
+load("data/derived/precipSum.RData")
+env.dev<-read_csv(env.dev.csv)
+precip.s1<-precip.sum %>% rename(year=yr.1) %>%
+  pivot_wider(id_cols=c(year, cell), names_from=season,values_from=pcp.dev.std)
+env.dev<-merge(env.dev, precip.s1, all.x=T, by=intersect(names(env.dev), names(precip.s1)))
+save(env.dev, file="data/derived/pheno.input.RData")
 
 pheno.input.dev<-merge(pheno.dev, env.dev, by=c("year","cell"), all.x=T) %>%
   filter(code %in% c("RE","RL","RP"), year<2018) %>%
+  mutate(code=ifelse(code=="RE","EO",ifelse(code=="RL","LO","PO"))) %>%
   mutate(year=year-2000, onset.ci.wt=1/(onset.ci+1),med.ci.wt=1/(median.ci+1),dur.ci.wt=1/(dur.ci+1))
 
-ggplot(data=pheno.input.dev, aes(x=year, y=onset.dev, color=code)) + geom_jitter()
-ggplot(data=pheno.input.dev, aes(x=year, y=median.dev, color=code)) + geom_jitter()
-ggplot(data=pheno.input.dev, aes(x=year, y=dur.dev, color=code)) + geom_jitter()
-
-meanon<-pheno.quant %>% group_by(year, code) %>% summarize(meanon=mean(q5, na.rm=T))
-ggplot(data=pheno.input.dev, aes(x=year, y=onset.dev, color=code)) + geom_smooth(method="lm") + labs(x="Year", y="Onset deviation")
-ggplot(data=pheno.quant, aes(x=year, y=q5, color=code)) + geom_smooth(method="lm") + labs(x="Year", y="Onset")
-ggplot(data=pheno.quant, aes(x=year, y=q5, color=code)) + geom_smooth(method="lm") + labs(x="Year", y="Onset") + geom_line(data=meanon, aes(x=year, y=meanon))
-
-pheno.input<-merge(pheno.quant, env.var, by=c("year","cell")) %>%
-  filter(code %in% c("RE","RL","RP"), year<2018) %>%
-  mutate(year=year-2000, q5.ci.wt=1/(q5_ci+1),q50.ci.wt=1/(q50_ci+1),qdur.ci.wt=1/(qdur_ci+1))
+save(pheno.input.dev, file="data/derived/pheno.dev.modelinput.RData")
 
 
-mean.on<-pheno.input %>% group_by(code) %>% summarize(meanon=mean(q5, na.rm=T),meandur=mean(qdur, na.rm=T), nmet=n())
-vardata<-pheno.input %>% group_by(code) %>% summarize(sdmed=sd(q50, na.rm=T), sddur=sd(qdur, na.rm=T))
+ggplot(data=pheno.input.dev, aes(x=year, y=onset.dev, color=code)) + geom_jitter() + scale_color_manual(values=mycolors)
+ggplot(data=pheno.input.dev, aes(x=year, y=median.dev, color=code)) + geom_jitter() + scale_color_manual(values=mycolors)
+ggplot(data=pheno.input.dev, aes(x=year, y=dur.dev, color=code)) + geom_jitter() + scale_color_manual(values=mycolors)
 
-save(pheno.input, pheno.input.dev, file="data/derived/model.input.RData")
-save(env.var, env.dev, file="data/derived/env.input.RData")
+###########################################################################
+# Phenology model: Annual deviance of onset -------------------------------
 
-### BASE for visualizations
+#weighted LMER with interactions of variables with overwintering code
+#random effect of cell
+onset.dev.full<-lmer(onset.dev~-1+code+warm.dev + dev.pc1 + dev.pc2 + open.lag.dev + year+ uniqObsDays + code:warm.dev + code:open.lag.dev + code:dev.pc1 + code:dev.pc2 + code:year  + code:uniqObsDays + code:(winter.p + spring.p) + (1|cell), data=pheno.input.dev, weights=onset.ci.wt)
+onset.dev.full<-lmer(onset.dev~-1+code*(warm.dev + dev.pc1 + dev.pc2 + open.lag.dev + year+ uniqObsDays + winter.p + spring.p) + (1|cell), data=pheno.input.dev, weights=onset.ci.wt)
 
-newcode<-c("RE","RL","RP")
-codelabel<-c("BOE","BOL","BOP")
-nrep<-1200
-
-newDat <- data.frame(cell = rep(507,nrep), 
-                     uniqObsDays=rep(median(pheno.input$uniqObsDays, na.rm=T),nrep),
-                     warmdays=rep(median(pheno.input$warmdays, na.rm=T),nrep),
-                     gr_mn_lag=rep(median(pheno.input$gr_mn_lag, na.rm=T),nrep),
-                     pc1=rep(median(pheno.input$pc1, na.rm=T),nrep),
-                     pc2=rep(median(pheno.input$pc2, na.rm=T),nrep),
-                     year=rep(10, nrep),
-                     code=rep(newcode, each=20,20),
-                     codelabel=rep(codelabel, each=20,20)) %>%
-  mutate(codelabel = factor(codelabel),code=factor(code)) %>%
-  mutate(codelabel=fct_reorder(codelabel, as.numeric(code)))
-
-maxvals<-apply(na.omit(pheno.input[,c(32,34:40)]),2,FUN=max)
-minvals<-apply(na.omit(pheno.input[,c(32,34:40)]),2,FUN=min)
-intervals<-round((maxvals-minvals)/20,3)
-
-dev.newDat <- data.frame(cell = rep(507,nrep), 
-                     uniqObsDays=rep(median(pheno.input.dev$uniqObsDays, na.rm=T),nrep),
-                     warm.dev=rep(0,nrep),
-                     lag.dev=rep(0,nrep),
-                     pc1.dev=rep(0,nrep),
-                     pc2.dev=rep(0,nrep),
-                     year=rep(10, nrep),
-                     code=rep(newcode, each=20,20),
-                     codelabel=rep(codelabel, each=20,20)) %>%
-  mutate(codelabel = factor(codelabel),code=factor(code)) #%>%
- #mutate(codelabel=fct_reorder(codelabel, as.numeric(code)))
-
-dev.maxvals<-apply(na.omit(pheno.input.dev[,c(1,4,8,11,16:22)]),2,FUN=max)
-dev.minvals<-apply(na.omit(pheno.input.dev[,c(1,4,8,11,16:22)]),2,FUN=min)
-dev.intervals<-round((dev.maxvals-dev.minvals)/20,3)
-
-
-
-
-
-
-
-################################################################################
-#### PHENOLOGICAL MODELS
-################################################################################
-
-### Analysis
-#### WEIGHTED LMER MODELS
-library(MASS)
-
-################################################################################
-#### PHENOLOGICAL MODELS: ONSET
-################################################################################
-onset.full<-lmer(q5~-1+code+code*(warmdays+pc1+pc2+ year + gr_mn_lag + uniqObsDays) + (1|cell), data=pheno.input, weights=q5.ci.wt)
-
-extractAIC(onset.full)
-(onset.step <- step(onset.full))
-onset.best <- get_model(onset.step) #stepAIC(ab.yr.full)
-summary(onset.best)
-onset.final<-lmer(q5~-1+code+code:warmdays +code:pc1 + code:year + code:gr_mn_lag + uniqObsDays + (1|cell), data=pheno.input, weights=q5.ci.wt)
-r.squaredGLMM(onset.final)
-summary(onset.final)
-extractAIC(onset.final)
-onset.pc1r2<-lmer(q5~-1+code+code:warmdays +code:year + code:gr_mn_lag + uniqObsDays + (1|cell), data=pheno.input, weights=q5.ci.wt)
-r.squaredGLMM(onset.final)[1]-r.squaredGLMM(onset.pc1r2)[1]
-onset.yrr2<-lmer(q5~-1+code+code:warmdays +code:pc1 + code:gr_mn_lag + uniqObsDays + (1|cell), data=pheno.input, weights=q5.ci.wt)
-r.squaredGLMM(onset.final)[1]-r.squaredGLMM(onset.yrr2)[1]
-onset.openlagr2<-lmer(q5~-1+code+code:warmdays +code:year + code:pc1 + uniqObsDays + (1|cell), data=pheno.input, weights=q5.ci.wt)
-r.squaredGLMM(onset.final)[1]-r.squaredGLMM(onset.openlagr2)[1]
-onset.wwdr2<-lmer(q5~-1+code+code:pc1 +code:year + code:gr_mn_lag + uniqObsDays + (1|cell), data=pheno.input, weights=q5.ci.wt)
-r.squaredGLMM(onset.final)[1]-r.squaredGLMM(onset.wwdr2)[1]
-
-### 
-
-#require(nlme)
-#fm <- lmer(q5 ~code + code:[], random = ~ 1|Subject,data=Orthodont,method='ML')
-#Terms <- terms(fm)
-#todrop <-  1:length(attr(Terms,'term.labels'))
-#subs <- unlist(sapply(todrop,function(p)
-#  combn(todrop,p,simplify=F)),recursive =F)
-#fm.subList <- lapply(subs[-length(subs)],function(s,...){
-#  newf<- formula(drop.terms(terms(fm),s,keep.response = TRUE))
-#  update(fm,newf)
-#})
-#names(fm.subList) <- sapply(fm.subList, function(x) paste('fm',attr(
-#  terms(x),'term.labels'),sep='.'))
-#sort(sapply(fm.subList,BIC))   
-
-#best.subsets<-regsubsets(q5 ~ ., data = model.input[c(1:12),],nbest=1,nvmax=NULL, method="exhaustive")
-#summary(tx.best.subset)
-#test1<-summary(tx.best.subset)
-#vars<-names(model.input[c(1:12),])[-1]
-
-#full.aic<-lm(avg10~., data=model.input)
-
-
-onset.vif<-lmer(q5~code+warmdays + pc1 + gr_mn_lag + year + uniqObsDays + (1|cell), data=pheno.input, weights=q5.ci.wt)
-vif(onset.vif)
-
-plot_model(onset.final, type = "eff", terms = c("year", "code"), title="Onset~Year")
-plot_model(onset.final, type = "eff", terms = c("warmdays", "code"), title="Onset~warm winter days")
-plot_model(onset.final, type = "eff", terms = c("pc1", "code"), title="Onset~PC1")
-plot_model(onset.final, type = "eff", terms = c("gr_mn_lag", "code"), title="Onset~open canopy lag")
-
-onset.output<-as_tibble(summary(onset.final)$coefficients) %>%
-  dplyr::mutate(param=row.names(summary(onset.final)$coefficients), sig=ifelse(`Pr(>|t|)`>0.05,0,1), r2m=round(r.squaredGLMM(onset.final)[1],2),r2c=round(r.squaredGLMM(onset.final)[2],2))
-write.csv(onset.output, file="output/onset.model0921.csv")
-#write.csv(summary(onset.final)$coefficients, file="output/onset0921.csv")
-
-
-######################################################
-##ONSET VISUALIZATION
-
-#SPATIAL PRED: WARM WINTER DAYS, OPEN CANOPY LAG, PC1, YEAR
-new.warmdays<-minvals["warmdays"]+(0:19)*intervals["warmdays"]
-new.lags<-minvals["gr_mn_lag"]+(0:19)*intervals["gr_mn_lag"]
-new.pc1<-minvals["pc1"]+(0:19)*intervals["pc1"]
-new.yr<-c(0:19)
-
-remove.cols<-which(names(newDat) %in% c("warmdays","pc1"))
-newdat.clim<-cbind(newDat[,-remove.cols], warmdays=rep(new.warmdays, 60), pc1=rep(new.pc1, each=60))
-newdat.clim$pred<-predict(onset.final, newdat.clim,allow.new.levels =T)
-
-lims.2<-pheno.input %>%
-  group_by(code) %>%
-  summarize(minwd=min(warmdays, na.rm=T),maxwd=max(warmdays, na.rm=T),
-            minpc1=min(pc1, na.rm=T),maxpc1=max(pc1, na.rm=T))
-
-newDat2<-inner_join(newdat.clim,lims.2) %>%
-  mutate(f1=ifelse(warmdays>=minwd,ifelse(warmdays<=maxwd,1,0),0)+ifelse(pc1>=minpc1,ifelse(pc1<=maxpc1,1,0),0)) %>%
-  filter(f1==2) %>% mutate(codelabel = factor(codelabel),code=factor(code)) %>%
-  mutate(codelabel=fct_reorder(codelabel, as.numeric(code)))
-
-
-F.onset.spat1<-ggplot(data=newDat2, aes(x=warmdays, y=pc1, fill=pred)) + 
-  geom_tile() +  labs(y="PC1", x="Winter Warm Days") + 
-  scale_fill_viridis(name="Onset") + 
-  facet_wrap(~codelabel)
-F.onset.spat1
-save(F.onset.spat1,file="output/onset.fig.1.png")
-
-
-## pc1 x year
-
-remove.cols<-which(names(newDat) %in% c("pc1","year","warmdays","gr_mn_lag"))
-newdat.clim<-cbind(newDat[,-remove.cols], year=rep(new.yr, 60), pc1=rep(new.pc1, each=60), warmdays=rep(75,nrep),gr_mn_lag=rep(40,nrep))
-newdat.clim$pred<-predict(onset.final, newdat.clim,allow.new.levels =T)
-
-lims.on2<-pheno.input %>%
-  group_by(code) %>%
-  summarize(minyr=min(year, na.rm=T),maxyr=max(year, na.rm=T),
-            minpc1=min(pc1, na.rm=T),maxpc1=max(pc1, na.rm=T))
-
-newDat.on2<-inner_join(newdat.clim,lims.on2) %>%
-  mutate(f1=ifelse(year>=minyr,ifelse(year<=maxyr,1,0),0)+ifelse(pc1>=minpc1,ifelse(pc1<=maxpc1,1,0),0)) %>%
-  filter(f1==2) %>% mutate(codelabel = factor(codelabel),code=factor(code)) %>%
-  mutate(codelabel=fct_reorder(codelabel, as.numeric(code)))
-
-
-F.onset.spat2<-ggplot(data=newDat.on2, aes(x=year, y=pc1, fill=pred)) + 
-  geom_tile() +  labs(y="PC1", x="Year") + 
-  #scale_fill_viridis(name="Onset") + 
-  scale_fill_gradient2() +  
-  facet_wrap(~codelabel)
-F.onset.spat2
-save(F.onset.spat2,file="output/onset.pc1.year.fig.png")
-
-
-################################################################################
-#### PHENOLOGICAL MODELS: ONSET DEVIATION
-################################################################################
-
-onset.dev.full<-lmer(onset.dev~-1+code+warm.dev + pc1.dev + pc2.dev + lag.dev + year+ uniqObsDays + code:warm.dev + code:lag.dev + code:pc1.dev + code:pc2.dev + code:year  + code:uniqObsDays + (1|cell), data=pheno.input.dev, weights=onset.ci.wt)
 extractAIC(onset.dev.full)
 r.squaredGLMM(onset.dev.full)     
-(t2<-as_tibble(bind_cols(Parameters=row.names(summary(onset.dev.full)$coefficients),summary(onset.dev.full)$coefficients)) %>% arrange(abs(`t value`)))
+(t1<-as_tibble(bind_cols(Parameters=row.names(summary(onset.dev.full)$coefficients),summary(onset.dev.full)$coefficients)) %>% arrange(abs(`t value`)))
 
+#stepwise model selection
 onset.dev.best<-get_model(step(onset.dev.full))
 
-(t2<-as_tibble(bind_cols(Parameters=row.names(summary(t1)$coefficients),summary(t1)$coefficients)) %>% arrange(abs(`t value`)))
+(t2<-as_tibble(bind_cols(Parameters=row.names(summary(onset.dev.best)$coefficients),summary(onset.dev.best)$coefficients)) %>% arrange(abs(`t value`)))
 summary(onset.dev.best)
 summary(onset.dev.best)$call
 
-onset.dev.final<-lmer(onset.dev~ -1 + code + uniqObsDays + code:pc1.dev + code:pc2.dev + code:year +(1|cell), data=pheno.input.dev, weights=onset.ci.wt)
-summary(onset.dev.final)
+#same model but structured for interpretability
+#include either effect across all overwintering groups, or with group-specific model fitting
+onset.dev.final<-lmer(onset.dev~ -1 + code + warm.dev + dev.pc1 + uniqObsDays +
+                       code:dev.pc2 + code:year + code:winter.p + code:spring.p + (1|cell), 
+                      data=pheno.input.dev, weights=onset.ci.wt)
+onset.dev.best<-get_model(step(onset.dev.final))
+summary(onset.dev.best)
 extractAIC(onset.dev.final)
-r.squaredGLMM(onset.dev.final)     
-onset.dev.pc1<-lmer(onset.dev~ -1 + code + uniqObsDays +code:pc2.dev  + code:year +(1|cell), data=pheno.input.dev, weights=onset.ci.wt)
-r.squaredGLMM(onset.dev.final)[1]-r.squaredGLMM(onset.dev.pc1)[1]
-onset.dev.pc2<-lmer(onset.dev~ -1 + code + uniqObsDays + code:pc1.dev + code:year +(1|cell), data=pheno.input.dev, weights=onset.ci.wt)
-r.squaredGLMM(onset.dev.final)[1]-r.squaredGLMM(onset.dev.pc2)[1]
-onset.dev.yr<-lmer(onset.dev~ -1 + code + uniqObsDays + code:pc1.dev + code:pc2.dev +(1|cell), data=pheno.input.dev, weights=onset.ci.wt)
-r.squaredGLMM(onset.dev.final)[1]-r.squaredGLMM(onset.dev.yr)[1]
-onset.dev.eff<-lmer(onset.dev~ -1 + code +  code:pc1.dev + code:pc2.dev +  code:year +(1|cell), data=pheno.input.dev, weights=onset.ci.wt)
-r.squaredGLMM(onset.dev.final)[1]-r.squaredGLMM(onset.dev.eff)[1]
+extractAIC(onset.dev.best)
+r.squaredGLMM(onset.dev.best)     
 
-test.vif<-lm(onset.dev~code+year+pc1.dev+pc2.dev+uniqObsDays, data=pheno.input.dev)
+#check for variable collinearity
+test.vif<-lm(onset.dev~code+year+dev.pc1+dev.pc2+year+warm.dev+winter.p + spring.p+uniqObsDays, data=pheno.input.dev)
 vif(test.vif)
 
-plot_model(onset.dev.final, type = "eff", terms = c("year", "code"), title="OnDev~Year")
-plot_model(onset.dev.final, type = "eff", terms = c("pc2.dev", "code"), title="OnDev~PC2 dev")
-plot_model(onset.dev.final, type = "eff", terms = c("pc1.dev", "code"), title="OnDev~PC1 dev")
+#look at partial r2
+onset.dev.pc1<-lmer(onset.dev~ -1 + code + uniqObsDays + warm.dev + code:dev.pc2 + code:year + code:winter.p + code:spring.p + (1|cell), data=pheno.input.dev, weights=onset.ci.wt)
+print(paste("partial r2 for pc1:",round(r.squaredGLMM(onset.dev.final)[1]-r.squaredGLMM(onset.dev.pc1)[1],3)))
+onset.dev.pc2<-lmer(onset.dev~ -1 + code + uniqObsDays + dev.pc1 + warm.dev + code:year + code:winter.p + code:spring.p + (1|cell), data=pheno.input.dev, weights=onset.ci.wt)
+print(paste("partial r2 for pc2:",round(r.squaredGLMM(onset.dev.final)[1]-r.squaredGLMM(onset.dev.pc2)[1],3)))
+onset.dev.yr<-lmer(onset.dev~ -1 + code + uniqObsDays + dev.pc1 + warm.dev+code:dev.pc2 + code:winter.p + code:spring.p + (1|cell), data=pheno.input.dev, weights=onset.ci.wt)
+print(paste("partial r2 for year:",round(r.squaredGLMM(onset.dev.final)[1]-r.squaredGLMM(onset.dev.yr)[1],3)))
+onset.dev.eff<-lmer(onset.dev~ -1 + code  + dev.pc1 + warm.dev+code:dev.pc2 + code:year + code:winter.p + code:spring.p + (1|cell), data=pheno.input.dev, weights=onset.ci.wt)
+print(paste("partial r2 for data density:",round(r.squaredGLMM(onset.dev.final)[1]-r.squaredGLMM(onset.dev.eff)[1],3)))
+onset.dev.wp<-lmer(onset.dev~ -1 + code + uniqObsDays + dev.pc1 + warm.dev+code:dev.pc2 + code:year + code:spring.p + (1|cell), data=pheno.input.dev, weights=onset.ci.wt)
+print(paste("partial r2 for winter precip:",round(r.squaredGLMM(onset.dev.final)[1]-r.squaredGLMM(onset.dev.wp)[1],3)))
+onset.dev.sp<-lmer(onset.dev~ -1 + code + uniqObsDays + dev.pc1 + warm.dev+code:dev.pc2 + code:year + code:winter.p + (1|cell), data=pheno.input.dev, weights=onset.ci.wt)
+print(paste("partial r2 for spring precip:",round(r.squaredGLMM(onset.dev.final)[1]-r.squaredGLMM(onset.dev.sp)[1],3)))
 
-onsetdev.output<-as_tibble(summary(onset.dev.final)$coefficients) %>%
-  dplyr::mutate(param=row.names(summary(onset.dev.final)$coefficients), sig=ifelse(`Pr(>|t|)`>0.05,0,1), r2m=round(r.squaredGLMM(onset.dev.final)[1],2),r2c=round(r.squaredGLMM(onset.dev.final)[2],2))
-write.csv(onsetdev.output, file="output/onset.dev.model0921.csv")
-
-##################################
-#ONSET DEV PLOT: PC1, PC2, Year are interesting
-#predict
-##
-new.pc1<-dev.minvals["pc1.dev"]+(0:19)*dev.intervals["pc1.dev"]
-new.pc2<-dev.minvals["pc2.dev"]+(0:19)*dev.intervals["pc2.dev"]
-#new.pc1<-minvals["pc1"]+(0:19)*intervals["pc1"]
-new.yr<-c(0:19)
-
-remove.cols<-which(names(dev.newDat) %in% c("pc1.dev","pc2.dev"))
-newdat.od<-cbind(dev.newDat[,-remove.cols], pc1.dev=rep(new.pc1, 60), pc2.dev=rep(new.pc2, each=60))
-newdat.od$pred <- predict(onset.dev.final, newdat.od, allow.new.levels =T)
-
-
-lims.dev<-pheno.input.dev %>%
-  group_by(code) %>%
-  summarize(minyr=min(year, na.rm=T),maxyr=max(year, na.rm=T),
-            minpc1=min(pc1.dev, na.rm=T),maxpc1=max(pc1.dev, na.rm=T),
-            minpc2=min(pc2.dev, na.rm=T), maxpc2=max(pc2.dev, na.rm=T))
-
-newDat.dev<-inner_join(newdat.od,lims.dev) %>%
-  mutate(f1=ifelse(pc2.dev>=minpc2,ifelse(pc2.dev<=maxpc2,1,0),0)+ifelse(pc1.dev>=minpc1,ifelse(pc1.dev<=maxpc1,1,0),0)) %>%
-  filter(f1==2) %>% mutate(codelabel = factor(codelabel),code=factor(code)) %>%
-  mutate(codelabel=fct_reorder(codelabel, as.numeric(code)))
+#save results and parameter table
+(onset.params<-as_tibble(summary(onset.dev.best)$coefficients) %>%
+  mutate(Estimate=round(Estimate, 4), StdError=round(`Std. Error`,4),parameter=row.names(summary(onset.dev.final)$coefficients)))
+write_csv(onset.params, file=onset.dev.output.csv)
+r.squaredGLMM(onset.dev.best)
+#save(onset.dev.best, file=onset.dev.model.file)
+plot_model(onset.dev.best,show.values = TRUE, value.offset = .5)
 
 
-##for fig 
-F.ondev.1<-ggplot(data=newDat.dev, aes(x=pc2.dev, y=pc1.dev, fill=pred)) + 
-  geom_tile() +  labs(x="PC2 Deviation", y="PC1 Deviation", fill="Onset Deviation") + 
-  scale_fill_gradient2() +  
-  facet_wrap(~codelabel)
-F.ondev.1
-save(F.ondev.1,file="output/onset.dev.fig.1.png")
+# Figure 2: Phenology (annual deviation) model results ---------------------------------------
+
+(plotyr<-plot_model(onset.dev.final, type = "eff", terms = c("year", "code"), alpha=0.5, size=2, colors=mycolors, se=TRUE, title="Year") + 
+ theme_classic() + ylim(-25,25) + 
+    scale_x_continuous(breaks = c(5, 10, 15),label = c("2005", "2010", "2015")) + 
+  labs(x="Year", y="\u25B3 Adult onset", color="Group", fill="Group") + 
+    theme(legend.position="none"))
+
+(plot.pc1<-plot_model(onset.dev.final, type = "eff", terms = c("dev.pc1", "code"), alpha=0.5, size=2, colors=mycolors, se=TRUE, title="Spring GDD + forest greenup") + 
+    theme_classic() + ylim(-25,25) + 
+    labs(x="PC1 --> early greenup (days), warm spring", y="\u25B3 Adult onset", color="Group", fill="Group") +
+    theme(legend.position="none"))
+
+(plot.pc2<-plot_model(onset.dev.final, type = "eff", terms = c("dev.pc2", "code"), alpha=0.5, size=2 , colors=mycolors, se=TRUE, title="GDD-Greenup decoupling") + 
+    theme_classic()  + ylim(-25,25) + 
+    labs(x="PC2 --> greenup later than expected (days)", y="", color="Group", fill="Group")+ 
+    theme(legend.position="none")) 
+
+(plot.warm<-plot_model(onset.dev.final, type = "eff", terms = c("warm.dev", "code"), alpha=0.5, size=2 , colors=mycolors, se=TRUE, title="Winter warm days") + 
+    theme_classic()  + ylim(-25,25) + 
+    labs(x="\u25B3 Winter days above 0C", y="", color="Group", fill="Group")+ 
+    theme(legend.position="none")) 
+
+(plot.winterp<-plot_model(onset.dev.final, type = "eff", terms = c("winter.p", "code"), alpha=0.5, size=2 , colors=mycolors, se=TRUE, title="Winter precipitation") + 
+    theme_classic()  + ylim(-25,25) + 
+    labs(x="\u25B3 Winter precipitation", y="", color="Group", fill="Group")+ 
+    theme(legend.position="none")) 
+
+(plot.springp<-plot_model(onset.dev.final, type = "eff", terms = c("spring.p", "code"), alpha=0.5, size=2 , colors=mycolors, se=TRUE, title="Spring precipitation") + 
+    theme_classic()  +ylim(-25,25) + 
+    labs(x="\u25B3 Spring precipitation", y="", color="Group", fill="Group")+ 
+    theme(legend.position="none")) 
+
+(legend.2<-ggplot(data=pheno.input.dev, aes(x=dev.pc1, y=onset.dev, color=code, fill=code)) + 
+  geom_smooth(method="lm", alpha=0.5) + scale_color_manual(values=mycolors, aesthetics=c("color","fill"), labels=c("EO","LO","PO")) +
+   theme(legend.position="right",legend.key.size = unit(1, 'cm'),legend.title = element_text(size=14)) + labs(color="Group", fill="Group") )
+
+l2<-get_legend(legend.2)
 
 
-#next fig
-remove.cols<-which(names(dev.newDat) %in% c("pc1.dev","year"))
-newdat.od2<-cbind(dev.newDat[,-remove.cols], pc1.dev=rep(new.pc1, 60), year=rep(new.yr, each=60))
-newdat.od2$pred <- predict(onset.dev.final, newdat.od2, allow.new.levels =T)
+(legend.2<-ggplot(data=pheno.input.dev, aes(x=dev.pc1, y=onset.dev, color=code, fill=code)) + 
+    geom_smooth(method="lm", alpha=0.5) + scale_color_manual(values=ows.colors, aesthetics=c("color","fill"), labels=c("EO","LO","PO")) +
+    theme(legend.position="right",legend.key.size = unit(1, 'cm'),legend.title = element_text(size=14)) + labs(color="Group", fill="Group") )
+l2<-get_legend(legend.2)
+
+#Create a panel legend with shapes for each group
+x11<-data.frame(group=c("EO","LO","PO"),x1=c(1,1,1),y1=c(1,2,3),pt=c(1.5,2.5,3.5))
+
+#overwinter group images
+BOEraster = readPNG("data/images/boe_art.png")
+BOLraster = readPNG("data/images/bol_art.png")
+BOPraster = readPNG("data/images/bop_art.png")
+x1<-c(1,1,1)
+y1<-c(1:3)
+
+rev.col<-rev(ows.colors)
+(legend3<- ggplot(data=x11, aes(x=x1, y=y1)) +  
+    geom_rect(xmin=x1, xmax=x1+1,ymin=y1,ymax=y1+1, fill=rev.col, alpha=0.5) +
+    geom_segment(x=x1,xend=x1+1,y=y1+0.5,yend=y1+0.5, color=rev.col, alpha=1) +
+    ylim(-.5,6.5) + xlim(0,8) +  theme_map(12) + labs(title="\u25B3 Adult flight onset") +
+    annotate("text", x = 2, y = 4.5, label = c("Overwinter stage"), size=5) + 
+    annotate("text", x = rep(2.6,3), y = c(1:3)+.5, label = c("PO", "LO", "EO"), size=4) + 
+    theme(plot.background = element_rect(color="white", fill = "white")) +
+    annotation_raster(BOPraster, xmin = 3.1, xmax=4.5,
+                      ymin = 1.2, ymax = 1.8, interpolate=T) +
+    annotation_raster(BOLraster, xmin = 3.1, xmax = 4.3, 
+                      ymin = 2.2, ymax = 2.8, interpolate = T) + 
+    annotation_raster(BOEraster, xmin = 3.1, xmax = 4.5, 
+                      ymin = 3.2, ymax = 3.8, interpolate = T) 
+)
+
+margin = theme(plot.margin = unit(c(0.1,0,0.5,0), "cm")) #top, right, bottom, left
+pp.a1<-legend3
 
 
-F.ondev.2<-ggplot(data=filter(newdat.od2, year<18), aes(x=year+2000, y=pc1.dev, fill=pred)) + 
-  geom_tile() +  labs(y="PC1 Deviation", x="Year", title="Onset deviation") + 
-  #scale_fill_gradient2(name="Predicted dev.") +  
-  scale_fill_viridis(name="Predicted dev.") + 
-  facet_wrap(~codelabel,nrow=3) + theme(legend.position="bottom")
-F.ondev.2
-#save(F.ondev.2,file="output/ondev.pc1.year.fig.png")
+(figonset<-grid.arrange(pp.a1, plot.pc1, plot.pc2, plotyr,plot.winterp,plot.springp, nrow=2))
+#ggsave(figonset, width=12,height=4, units="in", file=paste0("output/figures/onset.dev.result.23.png"))
 
-F.onset.spat2<-ggplot(data=newDat.on2, aes(x=year+2000, y=pc1, fill=pred)) + 
-  geom_tile() +  labs(y="PC1", x="Year", title="Adult onset") + 
-  #scale_fill_gradient2(name="Prediction") +
-  #scale_fill_viridis(name="Prediction") + 
-  facet_wrap(~codelabel, nrow=3) + theme(legend.position="bottom")
-F.onset.spat2
+#ggsave(figonset, width=12,height=5, units="in", file=paste0("output/figures/onset.dev.result.png"))
 
 
-library(gridExtra)
-(figonset<-grid.arrange(F.onset.spat2,F.ondev.2, nrow=1))
-#ggsave(figonset, width=6,height=7, units="in", file="output/fig.onsetdiverg.pdf")
-#ggsave(figonset, width=6,height=7, units="in", file="output/fig.onsetdiverg.png")
-ggsave(figonset, width=6,height=7, units="in", file="output/fig.onset.pdf")
-ggsave(figonset, width=6,height=7, units="in", file="output/fig.onset.png")
+(figonset<-grid.arrange(plotyr, plot.pc1, plot.pc2,l2, nrow=1, widths=c(1,1,1,.5)))
+#ggsave(figonset, width=10,height=6, units="in", file=paste0("output/figures/FIG2pheno.png"))
 
-(pheno.dev.power<-pheno.input.dev %>% group_by(code, cell) %>% summarize(n=1) %>% group_by(code) %>% tally())
+figon.10<-grid.arrange(plotyr, plot.pc1, plot.pc2,plot.winterp,plot.springp,pp.a1, nrow=2, widths=c(1,1,1))
+#ggsave(figon.10, width=10,height=4, units="in", file=paste0("output/figures/onset.rain.pdf"))
+#ggsave(figon.10, width=10,height=4, units="in", file=paste0("output/figures/onset.rain23.png"))
+##############
 
 
 ###########################################################################
-### PHENOLOGICAL MODELS: MEDIAN
-###########################################################################
-#ph2<-pheno.input
-#pheno.input<-ph2 %>% mutate(summer.gdd=summer.gdd/500)
-med.full<-lmer(q50~-1+code+code*(warmdays+pc1+pc2+summer.gdd+year + gr_mn_lag + uniqObsDays) + (1|cell), data=pheno.input, weights=q50.ci.wt)
-(med.step <- step(med.full))
-med.best <- get_model(med.step) #stepAIC(ab.yr.full)
-summary(med.best)
-med.final<-lmer(q50~-1+code+warmdays +pc1 + gr_mn_lag + code:summer.gdd +  (1|cell), data=pheno.input, weights=q50.ci.wt)
-r.squaredGLMM(med.final)
-summary(med.final)
-extractAIC(med.final)
+# Phenology model: spatiotemporal onset -------------------------------
+#Load environmental data
+env<-read_csv("data/derived/spatemp_env.csv")
+env<-merge(env, precip.s1, all.x=T, by=intersect(names(env), names(precip.s1)))
 
-med.vif<-lmer(q50~code+warmdays + pc1 + gr_mn_lag + summer.gdd + (1|cell), data=pheno.input, weights=q50.ci.wt)
-vif(med.vif)
-
-plot_model(med.final, type = "eff", terms = c("warmdays", "code"), title="med~warm winter days")
-plot_model(med.final, type = "eff", terms = c("pc1", "code"), title="med~PC1")
-plot_model(med.final, type = "eff", terms = c("gr_mn_lag", "code"), title="med~open canopy lag")
-plot_model(med.final, type = "eff", terms = c("summer.gdd", "code"), title="med~summer.gdd")
-
-med.output<-as_tibble(summary(med.final)$coefficients) %>%
-  dplyr::mutate(param=row.names(summary(med.final)$coefficients), sig=ifelse(`Pr(>|t|)`<0.05,1,0), r2m=round(r.squaredGLMM(med.final)[1],2),r2c=round(r.squaredGLMM(med.final)[2],2))
-write.csv(med.output, file="output/med.model0921.csv")
-#write.csv(summary(med.final)$coefficients, file="output/med0921.csv")
+load(pheno.data.st)
+pheno.quant<- pheno.quant %>%
+  mutate(qdur=q95-q5, qdur_low=q95_low-q5_high, qdur_high=q95_high-q5_low,
+       onset.ci=q5_high-q5_low,median.ci=q50_high-q50_low,
+       q95_ci=q95_high-q95_low,dur.ci=qdur_high-qdur_low)
 
 
-#SPATIAL PRED: WARM WINTER DAYS, SUMMER GDD
-newcode<-c("RE","RL","RP")
-codelabel<-c("egg","caterpillar","pupa")
-newffd<-round(c( ((round(min(pheno.input$warmdays, na.rm=T)))):((round(max(pheno.input$warmdays, na.rm=T))))),2)
-newgdd<-round(c( ((round(min(pheno.input$summer.gdd, na.rm=T)*50))):((round(max(pheno.input$summer.gdd, na.rm=T)*50)))),2)/50
-newyr<-c(10)
-newlag<-20
-nrep<-length(newcode)*length(newgdd)*length(newffd)
-newDatm <- data.frame(cell = rep(622,nrep), 
-                       uniqObsDays=rep(median(pheno.input$uniqObsDays, na.rm=T),nrep),
-                       gr_mn_lag=rep(median(pheno.input$gr_mn_lag, na.rm=T),nrep),
-                       pc1=rep(median(pheno.input$pc1, na.rm=T),nrep),
-                       pc2=rep(median(pheno.input$pc2, na.rm=T),nrep),
-                       year=rep(newyr,nrep),
-                       warmdays=rep(newffd,length(newgdd)*length(newcode)), ##
-                       summer.gdd=rep(newgdd,each=length(newffd),length(newcode)), ##
-                       code=rep(newcode, each=length(newgdd)*length(newffd)),
-                       codelabel=rep(codelabel, each=length(newgdd)*length(newffd)))
+pheno.input<-merge(pheno.quant, env, by=c("year","cell"), all.x=T) %>%
+  filter(code %in% c("RE","RL","RP"), year<2018) %>%
+  mutate(code=ifelse(code=="RE","EO",ifelse(code=="RL","LO","PO"))) %>%
+  rename(onset=q5, median=q50, duration=qdur) %>%
+  mutate(Year=year, year=year-2000, open.lag=gr_mn_open-forest.greenup,
+         onset.ci.wt=1/(onset.ci+1),med.ci.wt=1/(median.ci+1),dur.ci.wt=1/(dur.ci+1))
 
-newDatm$pred <- predict(med.final, newDatm,allow.new.levels =T)
+save(pheno.input, file="data/derived/pheno.ST.input.csv")
 
-lims.2<-pheno.input %>%
-  mutate(codelabel=ifelse(code=="RE","egg",ifelse(code=="RL","caterpillar","pupa"))) %>% 
-  group_by(code, codelabel) %>%
-  summarize(miny=floor(min(summer.gdd, na.rm=T)*5)/5,maxy=ceiling(max(summer.gdd, na.rm=T)*5)/5,
-            minx=floor(min(warmdays, na.rm=T)*5)/5,maxx=ceiling(max(warmdays, na.rm=T)*5)/5)
+#weighted LMER with interactions of variables with overwintering code
+#random effect of cell
+onset.full<-lmer(onset~-1+code+warmdays + ST.PC1 + ST.PC2 + open.lag + spring.p+winter.p+year+ uniqObsDays + code:warmdays + code:open.lag + code:ST.PC1 + code:ST.PC2 + code:spring.p + code:winter.p + code:year  + code:uniqObsDays + (1|cell), data=pheno.input, weights=onset.ci.wt)
+extractAIC(onset.full)
+r.squaredGLMM(onset.full)     
+(t1<-as_tibble(bind_cols(Parameters=row.names(summary(onset.full)$coefficients),summary(onset.full)$coefficients)) %>% arrange(abs(`t value`)))
 
-newDatm2<-inner_join(newDatm,lims.2) %>%
-  mutate(f1=ifelse(warmdays>=minx,ifelse(warmdays<=maxx,1,0),0)+ifelse(summer.gdd>=miny,ifelse(summer.gdd<=maxy,1,0),0)) %>%
-  filter(f1==2) %>% mutate(codelabel = factor(codelabel),code=factor(code)) %>%
-  mutate(codelabel=fct_reorder(codelabel, as.numeric(code)), summer.gdd=summer.gdd*500)
+#stepwise model selection
+onset.best<-get_model(step(onset.full))
 
+(t2<-as_tibble(bind_cols(Parameters=row.names(summary(onset.best)$coefficients),summary(onset.best)$coefficients)) %>% arrange(abs(`t value`)))
+summary(onset.best)
+summary(onset.best)$call
 
-(F.med.spat1<-ggplot(data=newDatm2, aes(y=warmdays, x=summer.gdd, fill=pred)) + 
-  geom_tile() +  labs(x="Summer GDD", y="Winter Warm Days") + 
-  scale_fill_viridis(name="med") + 
-  facet_wrap(~codelabel) )
+#same model but structured for interpretability
+#include either effect across all overwintering groups, or with group-specific model fitting
+onset.st.final<-lmer(onset~ -1 + code + code:ST.PC1 + code:warmdays + code:year + winter.p + uniqObsDays + (1|cell), data=pheno.input, weights=onset.ci.wt)
+summary(onset.st.final)
+extractAIC(onset.st.final)
+r.squaredGLMM(onset.st.final)     
+write.csv(as.data.frame(summary(onset.st.final)$coefficients), file="output/onset.st.param.csv")
 
-save(F.med.spat1,file="output/med.fig.1.png")
-
-###########################################################################
-### PHENOLOGICAL MODELS: MEDIAN DEVIATION
-###########################################################################
-
-
-med.dev.full<-lmer(median.dev~-1+code+warm.dev + summer.dev + pc1.dev + pc2.dev + lag.dev + year+ uniqObsDays + code:warm.dev + code:summer.dev +code:lag.dev + code:pc1.dev + code:pc2.dev + code:year + uniqObsDays + code:uniqObsDays + (1|cell), data=pheno.input.dev, weights=med.ci.wt)
-extractAIC(med.dev.full)
-r.squaredGLMM(med.dev.full)     
-(t2<-as_tibble(bind_cols(Parameters=row.names(summary(med.dev.full)$coefficients),summary(med.dev.full)$coefficients)) %>% arrange(abs(`t value`)))
-
-t1<-get_model(step(med.dev.full))
-
-(t2<-as_tibble(bind_cols(Parameters=row.names(summary(t1)$coefficients),summary(t1)$coefficients)) %>% arrange(abs(`t value`)))
-summary(t1)$call
-med.dev.final<-lmer(median.dev~ -1 + code + pc1.dev + warm.dev + code:lag.dev +(1|cell), data=pheno.input.dev, weights=med.ci.wt)
-summary(med.dev.final)
-extractAIC(med.dev.final)
-r.squaredGLMM(med.dev.final)     
-test.vif<-lm(median.dev~code+pc1.dev+warm.dev+lag.dev, data=pheno.input.dev)
+#check for variable collinearity
+test.vif<-lm(onset~code + ST.PC1 + warmdays + year + winter.p + uniqObsDays, data=pheno.input)
 vif(test.vif)
 
-plot_model(med.dev.final, type = "eff", terms = c("warm.dev", "code"), title="MedDev~Lag winter warm days")
-plot_model(med.dev.final, type = "eff", terms = c("lag.dev", "code"), title="MedDev~Lag dev")
-plot_model(med.dev.final, type = "eff", terms = c("pc1.dev", "code"), title="MedDev~PC1 dev")
 
-meddev.output<-as_tibble(summary(med.dev.final)$coefficients) %>%
-  dplyr::mutate(param=row.names(summary(med.dev.final)$coefficients), sig=ifelse(`Pr(>|t|)`<0.05,1,0), r2m=round(r.squaredGLMM(med.dev.final)[1],2),r2c=round(r.squaredGLMM(med.dev.final)[2],2))
-write.csv(meddev.output, file="output/med.dev.model0921.csv")
+# Supplemental: spatiotemporal onset model results ---------------------------------------
 
+(plotyr<-plot_model(onset.st.final, type = "eff", terms = c("year", "code"), alpha=0.5, size=2, colors=mycolors, se=TRUE, title="A. Onset Deviation ~ Year") + 
+   theme_classic() + 
+   scale_x_continuous(breaks = c(5, 10, 15),label = c("2005", "2010", "2015")) + 
+   labs(x="Year", y="Adult onset", color="Group", fill="Group") + 
+   theme(legend.position="none"))
+
+(plot.pc1<-plot_model(onset.st.final, type = "eff", terms = c("dev.pc1", "code"), alpha=0.5, size=2, colors=mycolors, se=TRUE, title="B. Onset Deviation ~ PC1") + 
+    theme_classic() + 
+    labs(x="PC1 --> early greenup, warm spring", y="Adult onset", color="Group", fill="Group") +
+    theme(legend.position="none"))
+
+(plot.pc2<-plot_model(onset.st.final, type = "eff", terms = c("dev.pc2", "code"), alpha=0.5, size=2 , colors=mycolors, se=TRUE, title="C. Onset Deviation ~ PC2") + 
+    theme_classic()  +
+    labs(x="PC2 --> greenup later than expected", y="Adult onset", color="Group", fill="Group")+ 
+    theme(legend.position="none")) 
+
+(plot.wp<-plot_model(onset.st.final, type = "eff", terms = c("winter.p", "code"), alpha=0.5, size=2 , colors=mycolors, se=TRUE, title="C. Onset Deviation ~ PC2") + 
+    theme_classic()  +
+    labs(x="Winter precipitation", y="Adult onset", color="Group", fill="Group")+ 
+    theme(legend.position="none")) 
+
+
+(legend.2<-ggplot(data=pheno.input.dev, aes(x=dev.pc1, y=onset.dev, color=code, fill=code)) + 
+    geom_smooth(method="lm", alpha=0.5) + scale_color_manual(values=mycolors, aesthetics=c("color","fill"), labels=c("EO","LO","PO")) +
+    theme(legend.position="right",legend.key.size = unit(1, 'cm'),legend.title = element_text(size=14)) + labs(color="Group", fill="Group") )
+
+l2<-get_legend(legend.2)
+
+(figonset<-grid.arrange(plotyr, plot.pc1, plot.pc2,l2, nrow=1, widths=c(1,1,1,.5)))
+#ggsave(figonset, width=12,height=4, units="in", file=paste0("output/figures/supp.onset.png"))
+
+
+##############
 
 
 
@@ -451,30 +298,30 @@ write.csv(meddev.output, file="output/med.dev.model0921.csv")
 ### PHENOLOGICAL MODELS: DURATION
 ###########################################################################
 #ph2<-pheno.input
-#pheno.input<-ph2 %>% mutate(summer.gdd=summer.gdd/500)
-dur.full<-lmer(qdur~-1+code+code*(warmdays+pc1+pc2+summer.gdd+year + gr_mn_lag + uniqObsDays) + (1|cell), data=pheno.input, weights=qdur.ci.wt)
-(dur.step <- step(dur.full))
-dur.best <- get_model(dur.step) #stepAIC(ab.yr.full)
+if(max(pheno.input$summer.gdd, na.rm=T)>1000) {
+  pheno.input<-pheno.input %>% mutate(summer.gdd=summer.gdd/100)
+}
+dur.full<-lmer(duration~-1+code+code*(warmdays + ST.PC1 + ST.PC2 + winter.p + spring.p + summer.p + open.lag + summer.gdd + year)+ uniqObsDays + (1|cell), data=pheno.input, weights=dur.ci.wt)
+extractAIC(dur.full)
+r.squaredGLMM(dur.full)     
+(t1<-as_tibble(bind_cols(Parameters=row.names(summary(dur.full)$coefficients),summary(dur.full)$coefficients)) %>% arrange(abs(`t value`)))
+
+#stepwise model selection
+dur.best<-get_model(step(dur.full))
+
+(t2<-as_tibble(bind_cols(Parameters=row.names(summary(dur.best)$coefficients),summary(dur.best)$coefficients)) %>% arrange(abs(`t value`)))
 summary(dur.best)
-dur.final<-lmer(qdur~-1+code+pc2+code:warmdays + code:gr_mn_lag + code:summer.gdd + code:year +code:uniqObsDays+ (1|cell), data=pheno.input, weights=qdur.ci.wt)
-r.squaredGLMM(dur.final)
-summary(dur.final)
-extractAIC(dur.final)
+summary(dur.best)$call
 
-dur.vif<-lmer(q50~code+warmdays + pc2 + uniqObsDays + warmdays + year + gr_mn_lag + summer.gdd + (1|cell), data=pheno.input, weights=q50.ci.wt)
-vif(dur.vif)
-
-plot_model(dur.final, type = "eff", terms = c("warmdays", "code"), title="dur~warm winter days")
-plot_model(dur.final, type = "eff", terms = c("year", "code"), title="dur~year")
-plot_model(dur.final, type = "eff", terms = c("gr_mn_lag", "code"), title="dur~open canopy lag")
-
-plot_model(dur.final, type = "eff", terms = c("summer.gdd", "code"), title="dur~summer.gdd")
-
-dur.output<-as_tibble(summary(dur.final)$coefficients) %>%
-  dplyr::mutate(param=row.names(summary(dur.final)$coefficients), sig=ifelse(`Pr(>|t|)`<0.05,1,0), r2m=round(r.squaredGLMM(dur.final)[1],2),r2c=round(r.squaredGLMM(dur.final)[2],2))
-write.csv(dur.output, file="output/dur.model0921.csv")
-#write.csv(summary(dur.final)$coefficients, file="output/dur0921.csv")
-
+#same model but structured for interpretability
+#include either effect across all overwintering groups, or with group-specific model fitting
+dur.st.final<-lmer(duration ~ -1 + code + ST.PC2 + code:warmdays + code:open.lag + summer.p + 
+                     code:spring.p + code:summer.gdd + code:year + uniqObsDays + (1|cell), 
+                   data=pheno.input, weights=dur.ci.wt)
+summary(dur.st.final)
+extractAIC(dur.st.final)
+r.squaredGLMM(dur.st.final)     
+write.csv(as.data.frame(summary(dur.st.final)$coefficients), file="output/dur.st.param.csv")
 
 
 ###########################################################################
@@ -482,7 +329,7 @@ write.csv(dur.output, file="output/dur.model0921.csv")
 ###########################################################################
 
 
-dur.dev.full<-lmer(dur.dev~-1+code+ code*(warm.dev + summer.dev + pc1.dev + pc2.dev + lag.dev + year+ uniqObsDays) + (1|cell),
+dur.dev.full<-lmer(dur.dev~-1+code+ code*(warm.dev + summer.gdd.dev + dev.pc1 + dev.pc2  + spring.p + summer.p + open.lag.dev + year+ uniqObsDays) + (1|cell),
                    data=pheno.input.dev, weights=dur.ci.wt)
 extractAIC(dur.dev.full)
 r.squaredGLMM(dur.dev.full)     
@@ -492,22 +339,50 @@ dur.best<-get_model(step(dur.dev.full))
 
 (t2<-as_tibble(bind_cols(Parameters=row.names(summary(dur.best)$coefficients),summary(dur.best)$coefficients)) %>% arrange(abs(`t value`)))
 summary(dur.best)$call
-dur.dev.final<-lmer(dur.dev~ -1 + code + warm.dev + code:summer.dev + code:pc1.dev + code:pc2.dev + code:lag.dev + code:year + code:uniqObsDays +  (1|cell), data=pheno.input.dev, weights=dur.ci.wt)
+dur.dev.final<-lmer(dur.dev~ -1 + code + warm.dev + summer.gdd.dev + code:dev.pc1 + code:dev.pc2 + code:spring.p + summer.p + code:open.lag.dev + code:year + code:uniqObsDays +  (1|cell), data=pheno.input.dev, weights=dur.ci.wt)
 summary(dur.dev.final)
+dur.dev.best<-get_model(step(dur.dev.final))
 extractAIC(dur.dev.final)
 r.squaredGLMM(dur.dev.final)     
-test.vif<-lm(dur.dev~code+pc1.dev+pc2.dev+warm.dev+lag.dev+summer.dev+year+uniqObsDays, data=pheno.input.dev)
+extractAIC(dur.dev.best)
+r.squaredGLMM(dur.dev.best)     
+test.vif<-lm(dur.dev~code+warm.dev+dev.pc1+dev.pc2+spring.p+summer.p+open.lag.dev+summer.gdd.dev+year+uniqObsDays, data=pheno.input.dev)
 vif(test.vif)
+summary(dur.dev.best)
 
-plot_model(dur.dev.final, type = "eff", terms = c("warm.dev", "code"), title="durDev~Lag winter warm days")
-plot_model(dur.dev.final, type = "eff", terms = c("lag.dev", "code"), title="durDev~Lag dev")
-plot_model(dur.dev.final, type = "eff", terms = c("pc1.dev", "code"), title="durDev~PC1 dev")
+#plot_model(dur.dev.final, type = "eff", terms = c("warm.dev", "code"), title="durDev~winter warm days") + 
+#  scale_fill_manual(values=ows.colors) + scale_color_manual(values=ows.colors)  
+(pp1<-plot_model(dur.dev.final, type = "eff", terms = c("summer.gdd.dev", "code"), title="Summer GDD", alpha=0.5, size=2, colors=ows.colors, se=TRUE) +
+  theme_classic() + ylim(-90,90) + theme(legend.position="none") + labs(x="\u25B3 Summer GDD",y="", color="Group", fill="Group"))
+
+(pp.pc1<-plot_model(dur.dev.final, type = "eff", terms = c("dev.pc1", "code"), title="Spring GDD + forest greenup", alpha=0.5, size=2, colors=ows.colors, se=TRUE) +
+    theme_classic() + ylim(-90,90) +theme(legend.position="none") + labs(x="PC2 --> warm spring, early greenup (days)",y="\u25B3 Flight period duration", color="Group", fill="Group"))
+(pp2<-plot_model(dur.dev.final, type = "eff", terms = c("dev.pc2", "code"), title="GDD-Greenup decoupling", alpha=0.5, size=2, colors=ows.colors, se=TRUE) +
+  theme_classic() + ylim(-90,90) +theme(legend.position="none") + labs(x="PC2 --> greenup later than expected (days)",y="", color="Group", fill="Group"))
+
+(pp3<-plot_model(dur.dev.final, type = "eff", terms = c("spring.p", "code"), title="Spring precipitation", alpha=0.5, size=2, colors=ows.colors, se=TRUE) +
+  theme_classic() +ylim(-90,90) + theme(legend.position="none") + labs(x="\u25B3 Spring precipitation",y="", color="Group", fill="Group"))
+(pp4<-plot_model(dur.dev.final, type = "eff", terms = c("summer.p", "code"), title="Summer precipitation", alpha=0.5, size=2, colors=ows.colors, se=TRUE) +
+  theme_classic() +ylim(-90,90) + theme(legend.position="none") + labs(x="\u25B3 summer precipitation",y="", color="Group", fill="Group"))
+(pp5<-plot_model(dur.dev.final, type = "eff", terms = c("warm.dev", "code"), title="Winter warm days", alpha=0.5, size=2, colors=ows.colors, se=TRUE) +
+  theme_classic() +ylim(-90,90) + theme(legend.position="none") + labs(x="\u25B3 days above 0C",y="", color="Group", fill="Group"))
+(pp6<-plot_model(dur.dev.final, type = "eff", terms = c("open.lag.dev", "code"), title="Open canopy greenup lag", alpha=0.5, size=2, colors=ows.colors, se=TRUE) +
+  theme_classic() + ylim(-90,90) +theme(legend.position="none") + labs(x="\u25B3 Open canopy lag",y="", color="Group", fill="Group") )
+(pp7<-plot_model(dur.dev.final, type = "eff", terms = c("year", "code"), title="Year", alpha=0.5, size=2, colors=ows.colors, se=TRUE) +
+  theme_classic() +ylim(-90,90) + theme(legend.position="none") + scale_x_continuous(breaks=c(5,10,15),labels=c("2005","2010","2015")) +
+    labs(x="Year",y="\u25B3 Flight period duration", color="Group", fill="Group") )
+(pp8<-plot_model(dur.dev.final, type = "eff", terms = c("uniqObsDays", "code"), title="N.Obs", alpha=0.5, size=2, colors=ows.colors, se=TRUE) +
+  theme_classic() +ylim(-90,90) + theme(legend.position="none")+ labs(x="n. Obs Days",y="\u25B3 Flight pd duration", color="Group", fill="Group") )
+
+#(fig.dur<-grid.arrange(arrangeGrob(legend3,pp.pc1,pp2,pp6,pp7,pp3,pp4,pp1, nrow=2, heights=c(2,2))))
+#(fig.dur<-grid.arrange(arrangeGrob(legend3,pp3,pp7,pp.pc1,pp2,pp6, nrow=2, heights=c(2,2))))
+
+#ggsave(fig.dur, width=12,height=4, units="in", file=paste0("output/figures/dur.rain.pdf"))
+#ggsave(fig.dur, width=12,height=4, units="in", file=paste0("output/figures/dur.rain.png"))
 
 durdev.output<-as_tibble(summary(dur.dev.final)$coefficients) %>%
   dplyr::mutate(param=row.names(summary(dur.dev.final)$coefficients), sig=ifelse(`Pr(>|t|)`<0.05,1,0), r2m=round(r.squaredGLMM(dur.dev.final)[1],2),r2c=round(r.squaredGLMM(dur.dev.final)[2],2))
-write.csv(durdev.output, file="output/dur.dev.model0921.csv")
-
-
+#write.csv(durdev.output, file=paste0("output/dur.dev.model",rundat,".csv"))
 
 
 ########################################################
@@ -527,78 +402,6 @@ ggplot(data=filter(pheno.input, year<10), aes(y=q5,x=qdur, color=cell_lat, shape
   scale_size_continuous(guide="none") + 
   facet_wrap(~fct_reorder(codelabels,as.numeric(as.factor(code))))
 
-### 
-Sys.time()
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-##MEDIAN DEVIATION
-
-med.dev.full<-lmer(median.dev~-1+code*(FFD.dev + pc1.dev + pc2.dev + summer.dev + year)+ uniqObsDays+ (1|cell), data=pheno.input.dev, weights=med.ci.wt)
-r.squaredGLMM(med.dev.full)     
-summary(med.dev.full)
-med.dev.step <- step(med.dev.full)
-med.dev.best <- get_model(med.dev.step) #stepAIC(ab.yr.full)
-summary(med.dev.best)
-r.squaredGLMM(med.dev.best)     
-plot_model(med.dev.best)
-med.dev.final<-lmer(median.dev~-1+code + pc1.dev + code:pc2.dev + summer.dev +  (1|cell), data=pheno.input.dev, weights=med.ci.wt)
-med.dev.vif<-lmer(median.dev~code + pc1.dev + pc2.dev + summer.dev + (1|cell), data=pheno.input.dev, weights=med.ci.wt)
-vif(med.dev.vif)
-plot_model(med.dev.final, type = "eff", terms = c("pc2.dev", "code"), title="Onset~PC2")
-
-
-#med
-med.full<-lmer(q50~code*(FFD + warmearly + warmlateopen + summer.dev  + year) + (1|cell), data=pheno.input, weights=q50.ci.wt)
-(med.step <- step(med.full))
-med.best <- get_model(med.step) #stepAIC(ab.yr.full)
-summary(med.best)
-med.vif<-lmer(q50 ~ code + FFD + warmlateopen + summer.dev + (1|cell), data=pheno.input, weights=q50.ci.wt)
-vif(med.vif)
-r.squaredGLMM(med.best)     
-plot_model(med.best, type = "eff", terms = c("warmlateopen","summer.dev"), title="Median")
-plot_model(med.best, type = "eff", terms = c("FFD","code"), title="Median")
-
-
-##DURATION DEVIATION
-dur.dev.full<-lmer(dur.dev~-1+code*(FFD.dev + pc1.dev + pc2.dev + summer.dev + year) + uniqObsDays + (1|cell), data=pheno.input.dev, weights=dur.ci.wt)
-r.squaredGLMM(dur.dev.full)     
-summary(dur.dev.full)
-dur.dev.step <- step(dur.dev.full)
-dur.dev.best <- get_model(dur.dev.step) #stepAIC(ab.yr.full)
-summary(dur.dev.best)
-dur.dev.final<-lmer(dur.dev~-1 + code + pc1.dev + code:pc2.dev + code:year + code:summer.dev + (1|cell), data=pheno.input.dev, weights=dur.ci.wt)
-r.squaredGLMM(dur.dev.final)     
-summary(dur.dev.final)
-extractAIC(dur.dev.final)     
-dur.dev.vif<-lmer(dur.dev~code + pc1.dev + pc2.dev + year + summer.dev + (1|cell), data=pheno.input.dev, weights=dur.ci.wt)
-vif(dur.dev.vif)
-plot_model(dur.dev.final, type = "eff", terms = c("pc2.dev", "code"), title="Duration deviation~ pc2 deviation")
-plot_model(dur.dev.final, type = "eff", terms = c("year", "code"), title="Duration deviation~ year")
-plot_model(dur.dev.final, type = "eff", terms = c("summer.dev", "code"), title="Duration deviation~ summer deviation")
-
 #DURATION
 dur.full<-lmer(qdur~-1+code*(FFD + warmearly + warmlateopen + summer.dev  + year) + (1|cell), data=pheno.input, weights=qdur.ci.wt)
 (dur.step <- step(dur.full))
@@ -611,8 +414,6 @@ dur.final<-lmer(qdur~-1+code:FFD + code:warmearly + warmlateopen + code:year + (
 plot_model(dur.final, type="eff", terms=c("year","code"))
 plot_model(dur.final, type="eff", terms=c("warmearly","code"))
 plot_model(dur.final, type="eff", terms=c("FFD","code"))
-
-
 
 
 #all plot_models
@@ -785,16 +586,8 @@ model.avg(x2)$coefficients[1,]
 
 ##
 pheno.input.dev1<-na.omit(pheno.input.dev)
-onsetdev.full<-lmer(onset.dev~-1+code+code*(warm.dev+pc1.dev+pc2.dev+ year + lag.dev) + uniqObsDays + (1|cell), data=pheno.input.dev1, weights=onset.ci.wt, na.action=na.fail)
+onsetdev.full<-lmer(onset.dev~-1+code+code*(warm.dev+dev.pc1+dev.pc2+ year + lag.dev) + uniqObsDays + (1|cell), data=pheno.input.dev1, weights=onset.ci.wt, na.action=na.fail)
 
 xd1<-dredge(onsetdev.full, beta = c("none"), evaluate = TRUE,
            rank = "AICc", fixed = c("code","uniqObsDays"), m.lim = NULL,
            trace = FALSE)
-
-summary(xd1)
-xd2<-xd1[xd1$weight>0.01,]
-model.avg(xd2)$coefficients[1,]
-
-
-
-ggplot(data=pheno.input, aes(x=year, y=pc2)) + geom_point()
